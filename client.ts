@@ -9,6 +9,15 @@ const score = await rpc.call({
 
 console.log("Score:", score.data)
 
-const greeting = await rpc.call({ type: "greet", name: "Testy McTestFace" })
+const game = await rpc.call({
+  type: "game",
+})
 
-console.log("Greeting", greeting.data)
+console.log("game", game)
+
+// const greeting = await rpc.call({
+//   type: "greet",
+//   name: "Testy McTestFace"
+// })
+
+// console.log("Greeting:", greeting.data)

@@ -7,6 +7,7 @@ const rpc = Socket.fromUrl<RequestApi, ResponseApi>(url)
 let score = 0
 rpc.match((data) => {
   console.log("Recieved", data)
+
   if (data.type === "score") {
     return {
       type: "score",
@@ -16,6 +17,11 @@ rpc.match((data) => {
     return {
       type: "greet",
       greeting: `Hello ${data.name}!`
+    }
+  } else if (data.type === "game") {
+    return {
+      type: "game",
+      name: "ne-rage"
     }
   }
   return {

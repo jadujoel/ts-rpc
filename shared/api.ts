@@ -7,7 +7,8 @@ export type RequestApi = Unknown | {
 } | {
   readonly type: "greet"
   readonly name: string
-
+} | {
+  readonly type: "game"
 }
 
 export type ResponseApi = Unknown | {
@@ -16,4 +17,7 @@ export type ResponseApi = Unknown | {
 } | {
   readonly type: "greet",
   readonly greeting: string
+}| {
+  readonly type: "game",
+  readonly name: string
 }

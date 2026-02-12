@@ -15,7 +15,6 @@ export type RpcResponse<TData = unknown> = {
 
 export type RpcApi<TRequestData = unknown, TResponseData = unknown> = RpcRequest<TRequestData> | RpcResponse<TResponseData>
 
-
 export class Socket<TRequestApi, TResponseApi> extends EventTarget {
   private _ws: WebSocket | undefined
   constructor(
@@ -35,7 +34,7 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
       if (ws.readyState === WebSocket.OPEN) {
         return ws
       }
-      //we must be in: ws.readyState === WebSocket.CONNECTING
+      // we must be in: ws.readyState === WebSocket.CONNECTING
       return new Promise((resolve) => {
         ws.addEventListener("open", () => {
           resolve(ws)
@@ -46,12 +45,14 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
       try {
         const ws = new WebSocket(this.url)
         this._ws = ws
-        ws.addEventListener("open", () => {
+        ws.addEventListener("open", (ev) => {
           this.state.set("open")
+          this.dispatchEvent(new MessageEvent(ev.type, ev))
           resolve(ws)
         })
         ws.addEventListener("close", (ev) => {
           this.state.set("closed")
+          this.dispatchEvent(new MessageEvent(ev.type, ev))
           this.open()
         })
         ws.addEventListener("message", (ev) => {
@@ -70,6 +71,7 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
         })
         ws.addEventListener("error", (ev) => {
           this.state.set("closed")
+          this.dispatchEvent(new MessageEvent(ev.type, ev))
           this.open()
         })
       } catch {
@@ -100,6 +102,7 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
     const promise = Promise.withResolvers<TResponse>()
     this.promises.set(message.requestId, promise)
     ws.send(str)
+
     return promise.promise
   }
 
@@ -117,7 +120,7 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
     ws.send(str)
   }
 
-  async match(meth: (data: TRequestApi) => TResponseApi) {
+  async match(meth: (data: TRequestApi) => TResponseApi | Promise<TResponseApi>) {
     this.addEventListener("message", async (ev) => {
       const msg: RpcApi<TRequestApi> = JSON.parse((ev as MessageEvent).data)
       if (msg.category === "request") {
@@ -128,6 +131,16 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
   }
 
   static fromUrl<TRequestApi, TResponseApi>(url: string): Socket<TRequestApi, TResponseApi> {
+    const socket = new Socket<TRequestApi, TResponseApi>(url)
+    socket.open()
+    return socket
+  }
+
+  static singleton: undefined | Socket<any, any>
+  static fromUrlSingleton<TRequestApi, TResponseApi>(url: string): Socket<TRequestApi, TResponseApi> {
+    if (Socket.singleton !== undefined) {
+      return Socket.singleton
+    }
     const socket = new Socket<TRequestApi, TResponseApi>(url)
     socket.open()
     return socket
