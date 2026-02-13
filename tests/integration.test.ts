@@ -2,12 +2,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import { serve } from "../serve";
+import { RpcPeer } from "../shared/RpcPeer";
 import {
 	RequestApiSchemaExample,
 	type ResponseApiExample,
 	ResponseApiSchemaExample,
-} from "../shared/api";
-import { RpcPeer } from "../shared/socket";
+} from "../shared/SchemaExample";
 
 describe("Integration Tests", () => {
 	let server: Server;
@@ -20,14 +20,14 @@ describe("Integration Tests", () => {
 			hostname: "127.0.0.1",
 			port: TEST_PORT,
 			development: false,
-      logger: {
-        ...console,
-        log: () => {},
-        warn: () => {},
-        error: () => {},
-        time: () => {},
-        timeEnd: () => {},
-      },
+			logger: {
+				...console,
+				log: () => {},
+				warn: () => {},
+				error: () => {},
+				time: () => {},
+				timeEnd: () => {},
+			},
 		});
 	});
 
@@ -238,6 +238,10 @@ describe("Integration Tests", () => {
 
 	describe("Error Handling", () => {
 		test("invalid request data is rejected by schema validation", (done) => {
+			// Suppress console.error for this test since we're intentionally sending invalid data
+			const originalConsoleError = console.error;
+			console.error = () => {};
+
 			const service = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
@@ -252,6 +256,7 @@ describe("Integration Tests", () => {
 
 			// Service should not receive invalid requests
 			service.match(() => {
+				console.error = originalConsoleError;
 				done(new Error("Should not receive invalid request"));
 				return { type: "unknown" };
 			});
@@ -265,6 +270,7 @@ describe("Integration Tests", () => {
 				setTimeout(() => {
 					service.close();
 					client.close();
+					console.error = originalConsoleError;
 					done();
 				}, 500);
 			}, 1000);

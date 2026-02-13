@@ -3,7 +3,7 @@
 /** biome-ignore-all lint/complexity/noBannedTypes: test file */
 import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
-import { RpcMessageSchema, RpcPeer } from "./socket";
+import { RpcMessageSchema, RpcPeer } from "./RpcPeer.ts";
 
 describe("RpcMessageSchema", () => {
 	test("validates request message", () => {

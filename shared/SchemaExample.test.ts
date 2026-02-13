@@ -4,7 +4,7 @@ import {
 	RequestApiSchemaExample,
 	type ResponseApiExample,
 	ResponseApiSchemaExample,
-} from "./api";
+} from "./SchemaExample.ts";
 
 describe("API Schemas", () => {
 	describe("RequestApiSchemaExample", () => {

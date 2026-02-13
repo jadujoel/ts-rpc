@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { RetrySocket } from "./RetrySocket";
+import { RetrySocket } from "./RetrySocket.ts";
 
 describe("RetrySocket", () => {
 	describe("Static properties", () => {

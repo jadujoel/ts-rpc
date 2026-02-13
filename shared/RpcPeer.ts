@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { RetrySocket } from "./RetrySocket";
+import { RetrySocket } from "./RetrySocket.ts";
 
 // Polyfill for Promise.withResolvers
-if (typeof Promise.withResolvers === "undefined") {
+if (Promise.withResolvers === undefined) {
 	Promise.withResolvers = () => {
 		let resolve: ExplicitAny;
 		let reject: ExplicitAny;
@@ -35,34 +35,53 @@ export const RpcMessageSchema = z.discriminatedUnion("category", [
 	}),
 ]);
 
-export type RpcRequest<TData = unknown> = {
+export type RpcRequest<
+	TData = unknown,
+	TRequestId extends string = string,
+	TFrom extends string = string,
+	TTo extends string = string,
+> = {
 	readonly category: "request";
-	readonly requestId: string;
-	readonly from?: string;
-	readonly to?: string;
+	readonly requestId: TRequestId;
+	readonly from?: TFrom;
+	readonly to?: TTo;
 	readonly data: TData;
 };
 
-export type RpcResponse<TData = unknown> = {
+export type RpcResponse<
+	TData = unknown,
+	TRequestId extends string = string,
+	TFrom extends string = string,
+	TTo extends string = string,
+> = {
 	readonly category: "response";
-	readonly requestId: string;
-	readonly from?: string;
-	readonly to?: string;
+	readonly requestId: TRequestId;
+	readonly from?: TFrom;
+	readonly to?: TTo;
 	readonly data: TData;
 };
 
-export type RpcWelcome = {
+export type RpcWelcome<TClientId extends string = string> = {
 	readonly category: "welcome";
-	readonly clientId: string;
+	readonly clientId: TClientId;
 };
 
-export type RpcApi<TReq, TRes> =
-	| RpcRequest<TReq>
-	| RpcResponse<TRes>
-	| RpcWelcome;
+export type RpcApi<
+	TRequest extends ExplicitAny = ExplicitAny,
+	TResponse extends ExplicitAny = ExplicitAny,
+	TRequestId extends string = string,
+	TFrom extends string = string,
+	TTo extends string = string,
+	TClientId extends string = string,
+> =
+	| RpcRequest<TRequest, TRequestId, TFrom, TTo>
+	| RpcResponse<TResponse, TRequestId, TFrom, TTo>
+	| RpcWelcome<TClientId>;
+
+export type Success = boolean;
 
 // biome-ignore lint/suspicious/noExplicitAny: we want to use any for generic types
-type ExplicitAny = any;
+export type ExplicitAny = any;
 
 export interface PendingPromiseItem {
 	readonly resolve: (data: ExplicitAny) => void;
@@ -70,7 +89,10 @@ export interface PendingPromiseItem {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
-export type PendingPromiseMap = Map<string, PendingPromiseItem>;
+export type PendingPromiseMap<TPromiseType extends string = string> = Map<
+	TPromiseType,
+	PendingPromiseItem
+>;
 
 export interface RpcPeerFromOptions<
 	TRequestSchema extends z.Schema<ExplicitAny> = z.Schema<ExplicitAny>,
@@ -140,7 +162,7 @@ export class RpcPeer<
 		TClientId,
 		TUrl
 	> {
-		const socket = new RpcPeer<
+		const peer = new RpcPeer<
 			TRequestSchema,
 			TResponseSchema,
 			TRequestApi,
@@ -156,19 +178,13 @@ export class RpcPeer<
 			options.responseSchema ?? undefined,
 		);
 
-		socket.retrySocket.addEventListener("message", (ev) =>
-			socket.handleMessage(ev as MessageEvent),
+		peer.retrySocket.addEventListener("message", (ev) =>
+			peer.handleMessage(ev as MessageEvent),
 		);
-		socket.retrySocket.addEventListener("open", (ev) =>
-			socket.dispatchEvent(ev),
-		);
-		socket.retrySocket.addEventListener("close", (ev) =>
-			socket.dispatchEvent(ev),
-		);
-		socket.retrySocket.addEventListener("error", (ev) =>
-			socket.dispatchEvent(ev),
-		);
-		return socket;
+		peer.retrySocket.addEventListener("open", (ev) => peer.dispatchEvent(ev));
+		peer.retrySocket.addEventListener("close", (ev) => peer.dispatchEvent(ev));
+		peer.retrySocket.addEventListener("error", (ev) => peer.dispatchEvent(ev));
+		return peer;
 	}
 
 	get state(): "closed" | "connecting" | "open" | "closing" {
@@ -176,27 +192,52 @@ export class RpcPeer<
 		return states[this.retrySocket.readyState] ?? "closed";
 	}
 
-	close(code?: number, reason?: string) {
+	welcomed(): boolean {
+		return this.clientId !== undefined;
+	}
+
+	waitForWelcome(timeout = 10_000): Promise<TClientId> {
+		if (this.clientId !== undefined) {
+			return Promise.resolve(this.clientId);
+		}
+
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.removeEventListener("welcome", welcomeHandler);
+				reject(new Error("Welcome Timed Out"));
+			}, timeout);
+
+			const welcomeHandler = (ev: Event) => {
+				const customEv = ev as CustomEvent<{ clientId: TClientId }>;
+				this.removeEventListener("welcome", welcomeHandler);
+				clearTimeout(timer);
+				resolve(customEv.detail.clientId);
+			};
+			this.addEventListener("welcome", welcomeHandler);
+		});
+	}
+
+	close(code?: number, reason?: string): void {
 		this.retrySocket.close(code, reason);
 	}
 
-	handleMessage(ev: MessageEvent) {
+	handleMessage(ev: MessageEvent): Success {
 		try {
 			const json = JSON.parse(ev.data);
 			const parsed = RpcMessageSchema.safeParse(json);
 
 			if (!parsed.success) {
 				console.warn("[Socket] Invalid message format:", parsed.error);
-				return;
+				return false;
 			}
 
 			const message = parsed.data;
 
 			if (message.category === "welcome") {
 				this.clientId = message.clientId as TClientId;
-				// console.log(`[Socket] Assigned ID: ${this._clientId}`);
+				console.debug(`[Socket] Assigned ID: ${this.clientId}`);
 				this.dispatchEvent(new CustomEvent("welcome", { detail: message }));
-				return;
+				return true;
 			}
 
 			if (message.category === "request") {
@@ -204,8 +245,8 @@ export class RpcPeer<
 				if (this.requestSchema !== undefined) {
 					const valid = this.requestSchema.safeParse(message.data);
 					if (!valid.success) {
-						console.error("[Socket] Invalid request data:", valid.error);
-						return;
+						console.debug("[Socket] Invalid request data:", valid.error);
+						return false;
 					}
 				}
 				this.dispatchEvent(new CustomEvent("request", { detail: message }));
@@ -220,7 +261,7 @@ export class RpcPeer<
 							);
 							clearTimeout(pending.timer);
 							this.pendingPromises.delete(message.requestId);
-							return;
+							return false;
 						}
 					}
 
@@ -230,8 +271,10 @@ export class RpcPeer<
 				}
 			}
 		} catch (err) {
-			console.error("[Socket] message error", err);
+			console.debug("[Socket] message error", err);
+			return false;
 		}
+		return true;
 	}
 
 	send(data: TRequestApi): void {
@@ -246,7 +289,7 @@ export class RpcPeer<
 
 	request<TResponse = TResponseApi>(
 		data: TRequestApi,
-		timeout = 10000,
+		timeout = 10_000,
 	): Promise<RpcResponse<TResponse>> {
 		const requestId = crypto.randomUUID();
 
@@ -275,7 +318,10 @@ export class RpcPeer<
 
 	call = this.request;
 
-	respondTo(originalRequest: RpcRequest<TRequestApi>, data: TResponseApi) {
+	respondTo(
+		originalRequest: RpcRequest<TRequestApi>,
+		data: TResponseApi,
+	): void {
 		const message: RpcResponse<TResponseApi> = {
 			category: "response",
 			requestId: originalRequest.requestId,
@@ -292,7 +338,7 @@ export class RpcPeer<
 			TResponseApi,
 			string
 		> = MatchHandler<TRequestApi, TResponseApi, string>,
-	>(handler: THandler) {
+	>(handler: THandler): void {
 		this.addEventListener("request", async (ev: Event) => {
 			const customEv = ev as CustomEvent<RpcRequest<TRequestApi>>;
 			const req = customEv.detail;
