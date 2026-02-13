@@ -115,7 +115,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	) {}
 
 	private connect() {
-		if (this.isClosedByUser) return;
+		if (this.isClosedByUser) {
+			return;
+		}
 
 		this.socket = new WebSocket(this.url);
 		this.socket.binaryType = this._binaryType;
@@ -149,6 +151,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	private scheduleReconnect() {
+		if (this.isClosedByUser) {
+			return;
+		}
 		const delay = Math.min(
 			this.reconnectInterval * 2 ** this.reconnectAttempts,
 			this.maxReconnectInterval,
@@ -161,7 +166,12 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	private flushMessageQueue() {
-		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+		if (this.isClosedByUser) {
+			return;
+		}
+		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+			return;
+		}
 		while (this.messageQueue.length > 0) {
 			const data = this.messageQueue.shift();
 			if (data !== undefined) {
@@ -170,7 +180,10 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
-	public send(data: string | ArrayBuffer | Blob | ArrayBufferView) {
+	public send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
+		if (this.isClosedByUser) {
+			return;
+		}
 		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
 			this.socket.send(data);
 		} else {
@@ -178,10 +191,17 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
-	public close(code?: number, reason?: string) {
+	public close(code?: number, reason?: string): void {
 		this.isClosedByUser = true;
 		if (this.socket) {
 			this.socket.close(code, reason);
+			this.socket = null;
+			this.messageQueue = [];
+			this.eventListeners.clear();
+			this.onclose = null;
+			this.onerror = null;
+			this.onmessage = null;
+			this.onopen = null;
 		}
 	}
 
@@ -190,6 +210,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		listener: EventListenerOrEventListenerObject,
 		_options?: boolean | AddEventListenerOptions,
 	) {
+		if (this.isClosedByUser) {
+			return;
+		}
 		if (!this.eventListeners.has(type)) {
 			this.eventListeners.set(type, new Set());
 		}
@@ -201,12 +224,18 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		listener: EventListenerOrEventListenerObject,
 		_options?: boolean | EventListenerOptions,
 	) {
+		if (this.isClosedByUser) {
+			return;
+		}
 		if (this.eventListeners.has(type)) {
 			this.eventListeners.get(type)!.delete(listener);
 		}
 	}
 
 	public dispatchEvent(event: Event): boolean {
+		if (this.isClosedByUser) {
+			return false;
+		}
 		const listeners = this.eventListeners.get(event.type);
 		if (!listeners) {
 			return true; // Per EventTarget spec, return true if no listeners canceled it (assuming no cancelable logic implemented here properly yet)
@@ -235,6 +264,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	public set binaryType(value: BinaryType) {
+		if (this.isClosedByUser) {
+			return;
+		}
 		this._binaryType = value;
 		if (this.socket) {
 			this.socket.binaryType = value;

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { RetrySocket } from "./RetrySocket.ts";
+import {
+	getCloseCodeDescription,
+	type WebSocketCloseCode,
+	WS_CLOSE_NORMAL,
+} from "./WebSocketCloseCodes.ts";
 
 // Polyfill for Promise.withResolvers
 if (Promise.withResolvers === undefined) {
@@ -19,14 +24,18 @@ export const RpcMessageSchema = z.discriminatedUnion("category", [
 		category: z.literal("request"),
 		requestId: z.string(),
 		from: z.string().optional(),
+		fromName: z.string().optional(),
 		to: z.string().optional(),
+		toName: z.string().optional(),
 		data: z.unknown(),
 	}),
 	z.object({
 		category: z.literal("response"),
 		requestId: z.string(),
 		from: z.string().optional(),
+		fromName: z.string().optional(),
 		to: z.string().optional(),
+		toName: z.string().optional(),
 		data: z.unknown(),
 	}),
 	z.object({
@@ -44,7 +53,9 @@ export type RpcRequest<
 	readonly category: "request";
 	readonly requestId: TRequestId;
 	readonly from?: TFrom;
+	readonly fromName?: string;
 	readonly to?: TTo;
+	readonly toName?: string;
 	readonly data: TData;
 };
 
@@ -57,7 +68,9 @@ export type RpcResponse<
 	readonly category: "response";
 	readonly requestId: TRequestId;
 	readonly from?: TFrom;
+	readonly fromName?: string;
 	readonly to?: TTo;
+	readonly toName?: string;
 	readonly data: TData;
 };
 
@@ -100,9 +113,11 @@ export interface RpcPeerFromOptions<
 	_TRequestApi extends ExplicitAny = z.infer<TRequestSchema>,
 	_TResponseApi extends ExplicitAny = z.infer<TResponseSchema>,
 	TClientId extends string = string,
+	TName extends string = string,
 	TUrl extends string = string,
 > {
 	readonly url: TUrl;
+	readonly name?: TName;
 	readonly clientId?: TClientId;
 	readonly pendingPromises?: PendingPromiseMap;
 	readonly retrySocket?: RetrySocket;
@@ -125,10 +140,12 @@ export class RpcPeer<
 	TRequestApi extends ExplicitAny = z.infer<TRequestSchema>,
 	TResponseApi extends ExplicitAny = z.infer<TResponseSchema>,
 	TClientId extends string = string,
+	TName extends string = string,
 	TUrl extends string = string,
 > extends EventTarget {
 	private constructor(
 		public readonly url: TUrl,
+		public readonly name: TName,
 		public clientId: TClientId | undefined,
 		public readonly pendingPromises: PendingPromiseMap = new Map(),
 		public readonly retrySocket: RetrySocket,
@@ -144,6 +161,7 @@ export class RpcPeer<
 		TRequestApi extends ExplicitAny = z.infer<TRequestSchema>,
 		TResponseApi extends ExplicitAny = z.infer<TResponseSchema>,
 		TClientId extends string = string,
+		TName extends string = string,
 		TUrl extends string = string,
 	>(
 		options: RpcPeerFromOptions<
@@ -152,6 +170,7 @@ export class RpcPeer<
 			TRequestApi,
 			TResponseApi,
 			TClientId,
+			TName,
 			TUrl
 		>,
 	): RpcPeer<
@@ -160,6 +179,7 @@ export class RpcPeer<
 		TRequestApi,
 		TResponseApi,
 		TClientId,
+		TName,
 		TUrl
 	> {
 		const peer = new RpcPeer<
@@ -168,9 +188,11 @@ export class RpcPeer<
 			TRequestApi,
 			TResponseApi,
 			TClientId,
+			TName,
 			TUrl
 		>(
 			options.url,
+			options.name ?? ("RpcPeer" as TName),
 			options.clientId ?? undefined,
 			options.pendingPromises ?? new Map(),
 			options.retrySocket ?? RetrySocket.FromUrl(options.url),
@@ -217,7 +239,10 @@ export class RpcPeer<
 		});
 	}
 
-	close(code?: number, reason?: string): void {
+	close(
+		code: WebSocketCloseCode = WS_CLOSE_NORMAL,
+		reason = getCloseCodeDescription(code),
+	): void {
 		this.retrySocket.close(code, reason);
 	}
 
@@ -282,6 +307,7 @@ export class RpcPeer<
 			category: "request",
 			requestId: crypto.randomUUID(),
 			from: this.clientId,
+			fromName: this.name,
 			data: data,
 		};
 		this.retrySocket.send(JSON.stringify(message));
@@ -297,6 +323,7 @@ export class RpcPeer<
 			category: "request",
 			requestId,
 			from: this.clientId,
+			fromName: this.name,
 			data: data,
 		};
 
@@ -326,7 +353,9 @@ export class RpcPeer<
 			category: "response",
 			requestId: originalRequest.requestId,
 			from: this.clientId,
+			fromName: this.name,
 			to: originalRequest.from,
+			toName: originalRequest.fromName,
 			data,
 		};
 		this.retrySocket.send(JSON.stringify(message));

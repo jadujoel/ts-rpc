@@ -4,6 +4,7 @@ import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
 } from "./shared/SchemaExample";
+import { WS_CLOSE_GOING_AWAY } from "./shared/WebSocketCloseCodes.ts";
 
 export async function example() {
 	const server = serve({
@@ -12,13 +13,15 @@ export async function example() {
 	});
 
 	const peer1 = RpcPeer.FromOptions({
-		url: "ws://127.0.0.1:8080/game-client-1",
+		url: "ws://127.0.0.1:8080/game",
+		name: "GameClient",
 		requestSchema: RequestApiSchemaExample,
 		responseSchema: ResponseApiSchemaExample,
 	});
 
 	const peer2 = RpcPeer.FromOptions({
-		url: "ws://127.0.0.1:8080/sound-client-1",
+		url: "ws://127.0.0.1:8080/game",
+		name: "GameService",
 		requestSchema: RequestApiSchemaExample,
 		responseSchema: ResponseApiSchemaExample,
 	});
@@ -71,7 +74,15 @@ export async function example() {
 
 	console.log("Greeting:", greeting.data);
 
-	server.stop();
+	peer1.close(WS_CLOSE_GOING_AWAY, "Going Away");
+	peer2.close();
+	console.log("Stopping server...");
+
+	// using true to force close works.
+	// await server.stop(true);
+	// This hangs for some reason, likely due to the way the RetrySocket is implemented and how it handles close. Needs investigation.
+	await server.stop(false);
+	console.log("Server stopped.");
 }
 
 if (import.meta.main) {

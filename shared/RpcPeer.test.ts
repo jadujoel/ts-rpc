@@ -277,9 +277,9 @@ describe("RpcPeer", () => {
 			responseSchema: z.any(),
 		});
 
-		const consoleErrorMock = mock(() => {});
-		const originalError = console.error;
-		console.error = consoleErrorMock;
+		const consoleDebugMock = mock(() => {});
+		const originalDebug = console.debug;
+		console.debug = consoleDebugMock;
 
 		// Invalid request
 		const invalidEvent = new MessageEvent("message", {
@@ -291,9 +291,9 @@ describe("RpcPeer", () => {
 		});
 
 		peer.handleMessage(invalidEvent);
-		expect(consoleErrorMock).toHaveBeenCalled();
+		expect(consoleDebugMock).toHaveBeenCalled();
 
-		console.error = originalError;
+		console.debug = originalDebug;
 	});
 
 	test("send creates proper RPC request", () => {
