@@ -20,6 +20,14 @@ describe("Integration Tests", () => {
 			hostname: "127.0.0.1",
 			port: TEST_PORT,
 			development: false,
+      logger: {
+        ...console,
+        log: () => {},
+        warn: () => {},
+        error: () => {},
+        time: () => {},
+        timeEnd: () => {},
+      },
 		});
 	});
 
