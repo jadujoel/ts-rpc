@@ -1,8 +1,11 @@
-import type { RequestApi, ResponseApi } from './shared/api'
+import { type RequestApi, type ResponseApi, RequestApiSchema, ResponseApiSchema } from './shared/api'
 import { Socket } from './shared/socket'
 
 const url = "ws://127.0.0.1:8080"
-const rpc = Socket.fromUrl<RequestApi, ResponseApi>(url)
+const rpc = Socket.fromUrl<RequestApi, ResponseApi>(url, {
+  requestSchema: RequestApiSchema,
+  responseSchema: ResponseApiSchema
+})
 
 let score = 0
 rpc.match((data) => {

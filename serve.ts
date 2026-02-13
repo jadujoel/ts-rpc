@@ -1,4 +1,4 @@
-import type { Server, WebSocketHandler } from 'bun'
+import type { Server, WebSocketHandler, ServerWebSocket } from 'bun'
 import * as util from "node:util"
 import * as api from "./api"
 import home from "./src/index.html"
@@ -13,37 +13,22 @@ export interface ServeOptions {
 const BANNED_STRINGS = ['..'] as const
 
 interface WebSocketData {
-  // from request url
-  // @example http://localhost:3000/client/test
   readonly url: string
   readonly host: string
-  // origin header
-  // @example "localhost:8080"
   readonly origin: string
-  // sec-websocket-version header
   readonly secWebsocketVersion: string
-  // from sec-websocket-key header
-  // @example "iuw4bYAJhwDevoA62XM3kg=="
   readonly secWebsocketKey: string
-  // from sec-websocket-extensions header
-  // @example "permessage-deflate; client_max_window_bits"
   readonly secWebsocketExtensions: string
-  // from the `new WebSocket(addr, ['protocol-1', 'protocol-2'])`
-  // @example "ecas-environment-v1"
   readonly secWebsocketProtocol: string
-  // user-agent header
-  // @example "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
   readonly userAgent: string
-  // accept-encoding header
-  // @example "gzip, deflate, br, zstd"
   readonly acceptEncoding: string
-
-  // defined by request pathname
-  // client/test
   readonly topic: string
-  // which time it was connected via new Date()
   readonly date: Date
+  readonly id: string
 }
+
+// Global map to track clients across the server instance
+const clients = new Map<string, ServerWebSocket<WebSocketData>>()
 
 export function serve({
   hostname = 'localhost',
@@ -82,13 +67,17 @@ export function serve({
       async open(ws): Promise<void> {
         const topic = ws.data.topic
         ws.subscribe(topic)
-        console.log(`[ws] open ${ws.remoteAddress} topic: ${topic} subscribers: ${server.subscriberCount(topic)}`)
-        ws.sendText(
-          JSON.stringify({
-            protocolName: 'ts-signal-rpc',
-            protocolVersion: '1.0.0',
-          })
-        )
+        
+        // Register client
+        clients.set(ws.data.id, ws)
+        
+        console.log(`[ws] open ${ws.remoteAddress} id: ${ws.data.id} topic: ${topic} subscribers: ${server.subscriberCount(topic)}`)
+        
+        // Send initial handshake/welcome
+        ws.send(JSON.stringify({
+           category: 'welcome',
+           clientId: ws.data.id
+        }))
       },
       message(ws, message): void {
         const topic = ws.data.topic
@@ -96,10 +85,32 @@ export function serve({
           console.error(`[ws] Failed To Recieve Message For ${ws.data.url} due to no Topic`)
           return
         }
-        ws.publish(topic, message as string | Bun.BufferSource)
+
+        try {
+            const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
+            const parsed = JSON.parse(raw);
+            
+            // If message has a specific destination, route it directly
+            if (parsed.to) {
+                const target = clients.get(parsed.to);
+                if (target) {
+                    // console.log(`[ws] Routing message from ${ws.data.id} to ${parsed.to}`);
+                    target.send(message);
+                } else {
+                    console.warn(`[ws] Target ${parsed.to} not found`);
+                }
+            } else {
+                // Otherwise broadcast to topic (legacy behavior + discovery)
+                ws.publish(topic, message as string | Bun.BufferSource)
+            }
+        } catch (err) {
+            console.error("[ws] Failed to parse message, broadcasting raw", err);
+            ws.publish(topic, message as string | Bun.BufferSource)
+        }
       },
       close(ws, code, reason): void {
-        console.log(`[ws] close ${ws.remoteAddress} code: ${code} reason: ${reason}`)
+        clients.delete(ws.data.id);
+        console.log(`[ws] close ${ws.remoteAddress} id: ${ws.data.id} code: ${code} reason: ${reason}`)
       }
     }
   })
@@ -121,6 +132,7 @@ function getWebSocketData(request: Request): WebSocketData {
     acceptEncoding: request.headers.get("accept-encoding") ?? "unknown",
     userAgent: request.headers.get("user-agent") ?? "unknown",
     date: new Date(),
+    id: crypto.randomUUID()
   }
   return data
 }

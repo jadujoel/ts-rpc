@@ -1,148 +1,277 @@
-import { useSignal } from './signal'
+import { z } from "zod";
+
+// Polyfill for Promise.withResolvers
+if (typeof Promise.withResolvers === 'undefined') {
+  // @ts-ignore
+  Promise.withResolvers = function () {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+}
+
+export const RpcMessageSchema = z.discriminatedUnion("category", [
+  z.object({
+    category: z.literal("request"),
+    requestId: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    data: z.unknown(),
+  }),
+  z.object({
+    category: z.literal("response"),
+    requestId: z.string(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    data: z.unknown(),
+  }),
+  z.object({
+    category: z.literal("welcome"),
+    clientId: z.string(),
+  }),
+]);
 
 export type RpcRequest<TData = unknown> = {
-  readonly category: "request",
-  readonly requestId: number,
-  readonly data: TData
-}
+  readonly category: "request";
+  readonly requestId: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly data: TData;
+};
 
 export type RpcResponse<TData = unknown> = {
-  readonly category: "response",
-  readonly requestId: number,
-  readonly responseId: number,
-  readonly data: TData
-}
+  readonly category: "response";
+  readonly requestId: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly data: TData;
+};
 
-export type RpcApi<TRequestData = unknown, TResponseData = unknown> = RpcRequest<TRequestData> | RpcResponse<TResponseData>
+export type RpcWelcome = {
+  readonly category: "welcome";
+  readonly clientId: string;
+};
+
+export type RpcApi<TReq, TRes> = RpcRequest<TReq> | RpcResponse<TRes> | RpcWelcome;
 
 export class Socket<TRequestApi, TResponseApi> extends EventTarget {
-  private _ws: WebSocket | undefined
+  private _ws: WebSocket | undefined;
+  private _clientId: string | undefined;
+  private _pendingPromises = new Map<
+    string,
+    { resolve: (data: any) => void; reject: (err: any) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  private _reconnectAttempts = 0;
+  private _forcedClose = false;
+
+  public state: "closed" | "connecting" | "open" = "closed";
+
   constructor(
     public readonly url: string,
-  ) {
-    super()
+    public readonly options: {
+      requestSchema?: z.Schema<TRequestApi>,
+      responseSchema?: z.Schema<TResponseApi>
+    } = {}) {
+    super();
   }
-
-  public requests = useSignal<RpcRequest<TRequestApi>>(undefined as any)
-  public responses = useSignal<RpcResponse<TResponseApi>>(undefined as any)
-  public state = useSignal<"closed" | "open">("closed")
 
   async open(): Promise<WebSocket> {
-    const ws = this._ws
-    const needsNewSocket = ws === undefined || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING
-    if (!needsNewSocket) {
-      if (ws.readyState === WebSocket.OPEN) {
-        return ws
-      }
-      // we must be in: ws.readyState === WebSocket.CONNECTING
-      return new Promise((resolve) => {
-        ws.addEventListener("open", () => {
-          resolve(ws)
-        }, { once: true })
-      })
-    }
-    const promise = new Promise<WebSocket>((resolve) => {
-      try {
-        const ws = new WebSocket(this.url)
-        this._ws = ws
-        ws.addEventListener("open", (ev) => {
-          this.state.set("open")
-          this.dispatchEvent(new MessageEvent(ev.type, ev))
-          resolve(ws)
-        })
-        ws.addEventListener("close", (ev) => {
-          this.state.set("closed")
-          this.dispatchEvent(new MessageEvent(ev.type, ev))
-          this.open()
-        })
-        ws.addEventListener("message", (ev) => {
-          const parsed = <RpcRequest<TRequestApi> | RpcResponse<TResponseApi>>JSON.parse(ev.data)
-          if (parsed.category === "request") {
-            this.requests.set(parsed)
-          } else if (parsed.category === "response") {
-            this.responses.set(parsed)
-            const promise = this.promises.get(parsed.requestId)
-            if (promise !== undefined) {
-              promise.resolve(parsed)
-              this.promises.delete(parsed.requestId)
+    if (this._ws?.readyState === WebSocket.OPEN) return this._ws;
+    if (this._ws?.readyState === WebSocket.CONNECTING) {
+        return new Promise((resolve, reject) => {
+            const tempListener = () => {
+                if (this._ws?.readyState === WebSocket.OPEN) {
+                     this._ws?.removeEventListener("close", closeListener);
+                     resolve(this._ws!);
+                }
+            };
+            const closeListener = () => {
+                this._ws?.removeEventListener("open", tempListener);
+                reject(new Error("Socket closed before open"));
             }
-          }
-          this.dispatchEvent(new MessageEvent(ev.type, ev))
-        })
-        ws.addEventListener("error", (ev) => {
-          this.state.set("closed")
-          this.dispatchEvent(new MessageEvent(ev.type, ev))
-          this.open()
-        })
-      } catch {
-        setTimeout(() => {
-          this.open().then(ws => resolve(ws))
-        }, 500)
+            this._ws?.addEventListener("open", tempListener, { once: true });
+            this._ws?.addEventListener("close", closeListener, { once: true });
+        });
+    }
+
+    this.state = "connecting";
+    this.dispatchEvent(new Event("statechange"));
+
+    return new Promise<WebSocket>((resolve) => {
+      const connect = () => {
+        try {
+          const ws = new WebSocket(this.url);
+          this._ws = ws;
+
+          ws.addEventListener("open", () => {
+            this.state = "open";
+            this._reconnectAttempts = 0;
+            this.dispatchEvent(new Event("statechange"));
+            this.dispatchEvent(new Event("open"));
+            resolve(ws);
+          });
+
+          ws.addEventListener("message", (ev) => this._handleMessage(ev));
+
+          ws.addEventListener("close", (ev) => {
+            this.state = "closed";
+            this._ws = undefined;
+            this.dispatchEvent(new Event("statechange"));
+            this.dispatchEvent(new Event("close"));
+
+            if (!this._forcedClose) {
+              const timeout = Math.min(1000 * 2 ** this._reconnectAttempts, 30000);
+              console.log(`[Socket] Reconnecting in ${timeout}ms...`);
+              this._reconnectAttempts++;
+              setTimeout(connect, timeout);
+            }
+          });
+
+          ws.addEventListener("error", (ev) => {
+            // console.error("[Socket] Error:", ev);
+            // Close handler will trigger reconnect
+          });
+        } catch (err) {
+             console.error("[Socket] Connection failed instantly", err);
+             const timeout = Math.min(1000 * 2 ** this._reconnectAttempts, 30000);
+             this._reconnectAttempts++;
+             setTimeout(connect, timeout);
+        }
+      };
+      connect();
+    });
+  }
+
+  close() {
+    this._forcedClose = true;
+    this._ws?.close();
+  }
+
+  private _handleMessage(ev: MessageEvent) {
+    try {
+      const json = JSON.parse(ev.data);
+      const parsed = RpcMessageSchema.safeParse(json);
+
+      if (!parsed.success) {
+        // console.warn("[Socket] Invalid message format:", parsed.error);
+        return;
       }
-    })
-    return promise
+
+      const message = parsed.data;
+
+      if (message.category === "welcome") {
+        this._clientId = message.clientId;
+        // console.log(`[Socket] Assigned ID: ${this._clientId}`);
+        this.dispatchEvent(new CustomEvent("welcome", { detail: message }));
+        return;
+      }
+
+      if (message.category === "request") {
+        // Validation of data payload if schema provided
+        if (this.options.requestSchema) {
+            const valid = this.options.requestSchema.safeParse(message.data);
+            if (!valid.success) {
+                console.error("[Socket] Invalid request data:", valid.error);
+                return;
+            }
+        }
+        this.dispatchEvent(new CustomEvent("request", { detail: message }));
+      } else if (message.category === "response") {
+        const pending = this._pendingPromises.get(message.requestId);
+        if (pending) {
+            if (this.options.responseSchema) {
+                const valid = this.options.responseSchema.safeParse(message.data);
+                if (!valid.success) {
+                    pending.reject(new Error(`Invalid response schema: ${valid.error.message}`));
+                    clearTimeout(pending.timer);
+                    this._pendingPromises.delete(message.requestId);
+                    return;
+                }
+            }
+
+            pending.resolve(message);
+            clearTimeout(pending.timer);
+            this._pendingPromises.delete(message.requestId);
+        }
+      }
+    } catch (err) {
+      console.error("[Socket] message error", err);
+    }
   }
 
-  async send(json: TRequestApi): Promise<void> {
-    const ws = await this.open()
-    ws.send(JSON.stringify(json))
+  async send(data: TRequestApi): Promise<void> {
+    const ws = await this.open();
+    const message: RpcRequest<TRequestApi> = {
+      category: "request",
+      requestId: crypto.randomUUID(),
+      from: this._clientId,
+      data: data,
+    };
+    ws.send(JSON.stringify(message));
   }
 
-  private promises = new Map<number, PromiseWithResolvers<any>>()
+  async request<TResponse = TResponseApi>(data: TRequestApi, timeout = 10000): Promise<RpcResponse<TResponse>> {
+    const ws = await this.open();
+    const requestId = crypto.randomUUID();
 
-  async request<TResponse = RpcResponse<TResponseApi>>(data: TRequestApi, requestId = Date.now()): Promise<TResponse> {
-    const message = <RpcRequest<TRequestApi>>{
+    const message: RpcRequest<TRequestApi> = {
       category: "request",
       requestId,
-      data: data
-    }
-    const str = JSON.stringify(message)
-    const ws = await this.open()
+      from: this._clientId,
+      data: data,
+    };
 
-    const promise = Promise.withResolvers<TResponse>()
-    this.promises.set(message.requestId, promise)
-    ws.send(str)
+    const { promise, resolve, reject } = Promise.withResolvers<RpcResponse<TResponse>>();
 
-    return promise.promise
+    const timer = setTimeout(() => {
+        if (this._pendingPromises.has(requestId)) {
+            this._pendingPromises.delete(requestId);
+            reject(new Error("Request Timed Out"));
+        }
+    }, timeout);
+
+    this._pendingPromises.set(requestId, { resolve, reject, timer });
+
+    ws.send(JSON.stringify(message));
+    return promise;
   }
 
-  call = this.request
+  call = this.request;
 
-  async respondTo(request: RpcRequest<TRequestApi>, data: TResponseApi) {
-    const message = <RpcResponse<TResponseApi>>{
-      category: "response",
-      requestId: request.requestId,
-      responseId: Date.now(),
-      data: data
-    }
-    const str = JSON.stringify(message)
-    const ws = await this.open()
-    ws.send(str)
+  async respondTo(originalRequest: RpcRequest<TRequestApi>, data: TResponseApi) {
+     const ws = await this.open();
+     const message: RpcResponse<TResponseApi> = {
+         category: "response",
+         requestId: originalRequest.requestId,
+         from: this._clientId,
+         to: originalRequest.from,
+         data
+     };
+     ws.send(JSON.stringify(message));
   }
 
-  async match(meth: (data: TRequestApi) => TResponseApi | Promise<TResponseApi>) {
-    this.addEventListener("message", async (ev) => {
-      const msg: RpcApi<TRequestApi> = JSON.parse((ev as MessageEvent).data)
-      if (msg.category === "request") {
-        const result = await meth(msg.data)
-        this.respondTo(msg, result)
-      }
-    })
+  match(handler: (data: TRequestApi, from?: string) => Promise<TResponseApi | void> | TResponseApi | void) {
+      this.addEventListener("request", async (ev: Event) => {
+          const customEv = ev as CustomEvent<RpcRequest<TRequestApi>>;
+          const req = customEv.detail;
+          try {
+            const result = await handler(req.data, req.from);
+            if (result !== undefined) {
+                // @ts-ignore
+                this.respondTo(req, result);
+            }
+          } catch (err) {
+              console.error("[Socket] Match handler error", err);
+          }
+      });
   }
 
-  static fromUrl<TRequestApi, TResponseApi>(url: string): Socket<TRequestApi, TResponseApi> {
-    const socket = new Socket<TRequestApi, TResponseApi>(url)
-    socket.open()
-    return socket
-  }
-
-  static singleton: undefined | Socket<any, any>
-  static fromUrlSingleton<TRequestApi, TResponseApi>(url: string): Socket<TRequestApi, TResponseApi> {
-    if (Socket.singleton !== undefined) {
-      return Socket.singleton
-    }
-    const socket = new Socket<TRequestApi, TResponseApi>(url)
-    socket.open()
-    return socket
+  static fromUrl<TReq, TRes>(url: string, options?: { requestSchema?: z.Schema<TReq>, responseSchema?: z.Schema<TRes> }): Socket<TReq, TRes> {
+    const socket = new Socket<TReq, TRes>(url, options);
+    socket.open();
+    return socket;
   }
 }
