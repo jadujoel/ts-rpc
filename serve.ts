@@ -67,12 +67,12 @@ export function serve({
       async open(ws): Promise<void> {
         const topic = ws.data.topic
         ws.subscribe(topic)
-        
+
         // Register client
         clients.set(ws.data.id, ws)
-        
+
         console.log(`[ws] open ${ws.remoteAddress} id: ${ws.data.id} topic: ${topic} subscribers: ${server.subscriberCount(topic)}`)
-        
+
         // Send initial handshake/welcome
         ws.send(JSON.stringify({
            category: 'welcome',
@@ -89,7 +89,7 @@ export function serve({
         try {
             const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
             const parsed = JSON.parse(raw);
-            
+
             // If message has a specific destination, route it directly
             if (parsed.to) {
                 const target = clients.get(parsed.to);
@@ -183,7 +183,7 @@ const cli = {
     })
     return {
       ...parsed.values,
-      port: Number.parseInt(parsed.values.port ?? 8080)
+      port: Number.parseInt(parsed.values.port ?? 8080, 10)
     }
   }
 }

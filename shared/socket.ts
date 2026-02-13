@@ -151,7 +151,7 @@ export class RpcPeer<
 			options.url,
 			options.clientId ?? undefined,
 			options.pendingPromises ?? new Map(),
-			options.retrySocket ?? new RetrySocket(options.url ?? ""),
+			options.retrySocket ?? RetrySocket.FromUrl(options.url),
 			options.requestSchema ?? undefined,
 			options.responseSchema ?? undefined,
 		);
@@ -171,27 +171,13 @@ export class RpcPeer<
 		return socket;
 	}
 
-	// public static connect<TReq, TRes>(
-	// 	url: string,
-	// 	options?: {
-	// 		requestSchema?: z.Schema<TReq>;
-	// 		responseSchema?: z.Schema<TRes>;
-	// 	},
-	// ): Socket<TReq, TRes> {
-	// 	return new Socket<TReq, TRes>(url, options);
-	// }
-
 	get state(): "closed" | "connecting" | "open" | "closing" {
 		const states = ["connecting", "open", "closing", "closed"] as const;
 		return states[this.retrySocket.readyState] ?? "closed";
 	}
 
-	async open(): Promise<RetrySocket> {
-		return this.retrySocket;
-	}
-
-	close() {
-		this.retrySocket.close();
+	close(code?: number, reason?: string) {
+		this.retrySocket.close(code, reason);
 	}
 
 	handleMessage(ev: MessageEvent) {

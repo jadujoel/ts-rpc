@@ -21,7 +21,7 @@ export interface RetrySocketFromOptions<TUrl extends string = string> {
 	/** @default 30_000 */
 	readonly maxReconnectInterval?: number;
 	/** @default [] */
-	readonly messageQueue: MessageQueue;
+	readonly messageQueue?: MessageQueue;
 	/** @default false */
 	readonly isClosedByUser?: boolean;
 	/** @default null */
