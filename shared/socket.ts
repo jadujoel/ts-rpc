@@ -69,13 +69,19 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
 
   public state: "closed" | "connecting" | "open" = "closed";
 
-  constructor(
+  private constructor(
     public readonly url: string,
     public readonly options: {
       requestSchema?: z.Schema<TRequestApi>,
       responseSchema?: z.Schema<TResponseApi>
     } = {}) {
     super();
+  }
+
+  public static connect<TReq, TRes>(url: string, options?: { requestSchema?: z.Schema<TReq>, responseSchema?: z.Schema<TRes> }): Socket<TReq, TRes> {
+    const socket = new Socket<TReq, TRes>(url, options);
+    socket.open();
+    return socket;
   }
 
   async open(): Promise<WebSocket> {
@@ -270,8 +276,6 @@ export class Socket<TRequestApi, TResponseApi> extends EventTarget {
   }
 
   static fromUrl<TReq, TRes>(url: string, options?: { requestSchema?: z.Schema<TReq>, responseSchema?: z.Schema<TRes> }): Socket<TReq, TRes> {
-    const socket = new Socket<TReq, TRes>(url, options);
-    socket.open();
-    return socket;
+    return Socket.connect(url, options);
   }
 }
