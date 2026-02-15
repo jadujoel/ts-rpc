@@ -56,7 +56,7 @@ export async function example() {
 	console.log("Sending Score request...");
 	const score = await peer1.call({
 		type: "score",
-	});
+	}, peer2.clientId);
 
 	console.log("Score:", score.data);
 

@@ -41,6 +41,21 @@ export const RpcMessageSchema = z.discriminatedUnion("category", [
 	z.object({
 		category: z.literal("welcome"),
 		clientId: z.string(),
+		sessionId: z.string().optional(),
+		restoredSession: z.boolean().optional(),
+	}),
+	z.object({
+		category: z.literal("ping"),
+		timestamp: z.number(),
+	}),
+	z.object({
+		category: z.literal("pong"),
+		timestamp: z.number(),
+	}),
+	z.object({
+		category: z.literal("error"),
+		error: z.string(),
+		details: z.unknown().optional(),
 	}),
 ]);
 
@@ -64,19 +79,39 @@ export type RpcResponse<
 	TRequestId extends string = string,
 	TFrom extends string = string,
 	TTo extends string = string,
+	TFromName extends string = string,
+	TToName extends string = string,
 > = {
 	readonly category: "response";
 	readonly requestId: TRequestId;
 	readonly from?: TFrom;
-	readonly fromName?: string;
+	readonly fromName?: TFromName;
 	readonly to?: TTo;
-	readonly toName?: string;
+	readonly toName?: TToName;
 	readonly data: TData;
 };
 
 export type RpcWelcome<TClientId extends string = string> = {
 	readonly category: "welcome";
 	readonly clientId: TClientId;
+	readonly sessionId?: string;
+	readonly restoredSession?: boolean;
+};
+
+export type RpcPing = {
+	readonly category: "ping";
+	readonly timestamp: number;
+};
+
+export type RpcPong = {
+	readonly category: "pong";
+	readonly timestamp: number;
+};
+
+export type RpcError = {
+	readonly category: "error";
+	readonly error: string;
+	readonly details?: unknown;
 };
 
 export type RpcApi<
@@ -86,10 +121,15 @@ export type RpcApi<
 	TFrom extends string = string,
 	TTo extends string = string,
 	TClientId extends string = string,
+	TFromName extends string = string,
+	TToName extends string = string,
 > =
 	| RpcRequest<TRequest, TRequestId, TFrom, TTo>
-	| RpcResponse<TResponse, TRequestId, TFrom, TTo>
-	| RpcWelcome<TClientId>;
+	| RpcResponse<TResponse, TRequestId, TFrom, TTo, TFromName, TToName>
+	| RpcWelcome<TClientId>
+	| RpcPing
+	| RpcPong
+	| RpcError;
 
 export type Success = boolean;
 
@@ -119,10 +159,13 @@ export interface RpcPeerFromOptions<
 	readonly url: TUrl;
 	readonly name?: TName;
 	readonly clientId?: TClientId;
+	readonly sessionId?: string;
 	readonly pendingPromises?: PendingPromiseMap;
 	readonly retrySocket?: RetrySocket;
 	readonly requestSchema: TRequestSchema;
 	readonly responseSchema: TResponseSchema;
+	readonly enableHeartbeat?: boolean;
+	readonly heartbeatInterval?: number;
 }
 
 export type MatchHandler<
@@ -133,6 +176,9 @@ export type MatchHandler<
 	data: TRequestApi,
 	from?: TFrom,
 ) => Promise<TResponseApi | undefined> | TResponseApi | undefined;
+
+export type SetTimeout = typeof global.setTimeout;
+export type SetTimeoutReturn = ReturnType<SetTimeout>;
 
 export type RpcPeerEventMap = {
 	readonly open: Event;
@@ -178,6 +224,9 @@ export class RpcPeer<
 		public readonly retrySocket: RetrySocket,
 		public readonly requestSchema: TRequestSchema | undefined,
 		public readonly responseSchema: TResponseSchema | undefined,
+		public sessionId: string | undefined,
+		private heartbeatTimer: SetTimeoutReturn | null = null,
+		private heartbeatInterval = 30_000,
 	) {
 		super();
 	}
@@ -237,6 +286,14 @@ export class RpcPeer<
 		TName,
 		TUrl
 	> {
+		// Build URL with sessionId if provided
+		let url = options.url;
+		if (options.sessionId) {
+			const urlObj = new URL(url);
+			urlObj.searchParams.set("sessionId", options.sessionId);
+			url = urlObj.toString() as TUrl;
+		}
+
 		const peer = new RpcPeer<
 			TRequestSchema,
 			TResponseSchema,
@@ -246,14 +303,19 @@ export class RpcPeer<
 			TName,
 			TUrl
 		>(
-			options.url,
+			url,
 			options.name ?? ("RpcPeer" as TName),
 			options.clientId ?? undefined,
 			options.pendingPromises ?? new Map(),
-			options.retrySocket ?? RetrySocket.FromUrl(options.url),
+			options.retrySocket ?? RetrySocket.FromUrl(url),
 			options.requestSchema ?? undefined,
 			options.responseSchema ?? undefined,
+			options.sessionId,
 		);
+
+		if (options.heartbeatInterval) {
+			peer.heartbeatInterval = options.heartbeatInterval;
+		}
 
 		peer.retrySocket.addEventListener("message", (ev) =>
 			peer.handleMessage(ev as MessageEvent),
@@ -263,9 +325,14 @@ export class RpcPeer<
 		// because events cannot be re-dispatched once they're being dispatched
 		peer.retrySocket.addEventListener("open", (ev) => {
 			peer.dispatchEvent(new Event(ev.type));
+			// Start heartbeat when connected
+			if (options.enableHeartbeat) {
+				peer.startHeartbeat();
+			}
 		});
 		peer.retrySocket.addEventListener("close", (ev: Event): void => {
 			const actual = ev as CloseEvent;
+			peer.stopHeartbeat();
 			peer.dispatchEvent(
 				new CloseEvent("close", {
 					code: actual.code,
@@ -289,6 +356,7 @@ export class RpcPeer<
 	async dispose(): Promise<void> {
 		console.time("[Peer] Dispose");
 		console.debug("[Peer] Dispose");
+		this.stopHeartbeat();
 		await this.close();
 
 		await this.retrySocket.dispose();
@@ -301,6 +369,27 @@ export class RpcPeer<
 		this.pendingPromises.clear();
 
 		console.time("[Peer] Dispose");
+	}
+
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
+		this.heartbeatTimer = global.setInterval(() => {
+			if (this.retrySocket.readyState === WebSocket.OPEN) {
+				this.retrySocket.send(
+					JSON.stringify({
+						category: "ping",
+						timestamp: Date.now(),
+					}),
+				);
+			}
+		}, this.heartbeatInterval);
+	}
+
+	private stopHeartbeat(): void {
+		if (this.heartbeatTimer) {
+			global.clearInterval(this.heartbeatTimer);
+			this.heartbeatTimer = null;
+		}
 	}
 
 	get state(): "closed" | "connecting" | "open" | "closing" {
@@ -409,8 +498,42 @@ export class RpcPeer<
 
 			if (message.category === "welcome") {
 				this.clientId = message.clientId as TClientId;
-				console.debug(`[Peer] Assigned ID: ${this.clientId}`);
+				if (message.sessionId) {
+					this.sessionId = message.sessionId;
+				}
+				console.debug(
+					`[Peer] Assigned ID: ${this.clientId}, Session: ${this.sessionId}, Restored: ${message.restoredSession ?? false}`,
+				);
 				this.dispatchEvent(RpcPeer.WelcomeEvent(message));
+				return true;
+			}
+
+			if (message.category === "ping") {
+				// Respond to ping with pong
+				this.retrySocket.send(
+					JSON.stringify({
+						category: "pong",
+						timestamp: message.timestamp,
+					}),
+				);
+				return true;
+			}
+
+			if (message.category === "pong") {
+				// Could track latency here if needed
+				const latency = Date.now() - message.timestamp;
+				console.debug(`[Peer] Heartbeat latency: ${latency}ms`);
+				return true;
+			}
+
+			if (message.category === "error") {
+				console.error(`[Peer] Server error: ${message.error}`, message.details);
+				// Dispatch error event
+				this.dispatchEvent(
+					new CustomEvent("error", {
+						detail: message,
+					}),
+				);
 				return true;
 			}
 
@@ -465,8 +588,15 @@ export class RpcPeer<
 
 	request<const TResponse = TResponseApi, const TRequest = TRequestApi>(
 		data: TRequest,
-		timeout: number = RpcPeer.Timeouts.Request,
+		toOrTimeout?: string | number,
+		timeoutParam?: number,
 	): Promise<RpcResponse<TResponse>> {
+		const to = typeof toOrTimeout === "string" ? toOrTimeout : undefined;
+		const timeout =
+			typeof toOrTimeout === "number"
+				? toOrTimeout
+				: (timeoutParam ?? RpcPeer.Timeouts.Request);
+
 		const requestId = crypto.randomUUID();
 
 		const message: RpcRequest<TRequest> = {
@@ -474,6 +604,7 @@ export class RpcPeer<
 			requestId,
 			from: this.clientId,
 			fromName: this.name,
+			to,
 			data: data,
 		};
 

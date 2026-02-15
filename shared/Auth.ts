@@ -1,0 +1,294 @@
+import { z } from "zod";
+
+/**
+ * Authentication token schema
+ */
+export const AuthTokenSchema = z.object({
+	token: z.string().min(1),
+	userId: z.string().optional(),
+	sessionId: z.string().optional(),
+});
+
+export type AuthToken = z.infer<typeof AuthTokenSchema>;
+
+/**
+ * Authentication context attached to WebSocket connections
+ */
+export interface AuthContext<
+	TUserIds extends string = string,
+	TSessionIds extends string = string,
+	TPermissions extends string = string,
+> {
+	readonly userId?: TUserIds;
+	readonly sessionId?: TSessionIds;
+	readonly permissions: Set<TPermissions>;
+	readonly connectedAt: Date;
+	readonly lastActivityAt: Date;
+}
+
+/**
+ * Authorization rules for topics and peer-to-peer messaging
+ */
+export interface AuthorizationRules<
+	TUserId extends string = string,
+	TTopic extends string = string,
+	TToClientId extends string = string,
+> {
+	/**
+	 * Check if user can subscribe to a topic
+	 */
+	canSubscribeToTopic(userId: TUserId | undefined, topic: TTopic): boolean;
+
+	/**
+	 * Check if user can send messages to a topic
+	 */
+	canPublishToTopic(userId: TUserId | undefined, topic: TTopic): boolean;
+
+	/**
+	 * Check if user can send direct messages to another peer
+	 */
+	canMessagePeer(
+		fromUserId: TUserId | undefined,
+		toClientId: TToClientId,
+	): boolean;
+
+	/**
+	 * Get rate limit for user (messages per second)
+	 */
+	getRateLimit(userId: TUserId | undefined): number;
+}
+
+/**
+ * Default authorization rules - permissive for development
+ */
+export class DefaultAuthorizationRules<
+	TUserId extends string = string,
+	TTopic extends string = string,
+	TToClientId extends string = string,
+> implements AuthorizationRules<TUserId, TTopic, TToClientId>
+{
+	canSubscribeToTopic(_userId: TUserId | undefined, _topic: TTopic): boolean {
+		return true;
+	}
+
+	canPublishToTopic(_userId: TUserId | undefined, _topic: TTopic): boolean {
+		return true;
+	}
+
+	canMessagePeer(
+		_fromUserId: TUserId | undefined,
+		_toClientId: TToClientId,
+	): boolean {
+		return true;
+	}
+
+	getRateLimit(_userId: TUserId | undefined): number {
+		return 100; // 100 messages per second default
+	}
+}
+
+/**
+ * Example strict authorization rules
+ */
+export class StrictAuthorizationRules<
+	TUserId extends string = string,
+	TTopic extends string = string,
+	TToClientId extends string = string,
+> implements AuthorizationRules<TUserId, TTopic, TToClientId>
+{
+	constructor(
+		private readonly admins: Set<TUserId>,
+		private readonly topicPermissions: Map<TTopic, Set<TUserId>> = new Map(),
+	) {
+		this.admins = new Set(admins);
+	}
+
+	static FromAdmins<
+		TUserId extends string,
+		TTopic extends string,
+		TToClientId extends string,
+	>(
+		adminUsers: readonly TUserId[],
+	): StrictAuthorizationRules<TUserId, TTopic, TToClientId> {
+		const set = new Set(adminUsers);
+		return new StrictAuthorizationRules(set, new Map());
+	}
+
+	canSubscribeToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
+		if (!userId) return false;
+		if (this.admins.has(userId)) return true;
+
+		const allowedUsers = this.topicPermissions.get(topic);
+		return allowedUsers ? allowedUsers.has(userId) : false;
+	}
+
+	canPublishToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
+		return this.canSubscribeToTopic(userId, topic);
+	}
+
+	canMessagePeer(
+		fromUserId: TUserId | undefined,
+		_toClientId: TToClientId,
+	): boolean {
+		// Must be authenticated to send direct messages
+		return fromUserId !== undefined;
+	}
+
+	getRateLimit(userId: TUserId | undefined): number {
+		if (!userId) return 10; // Unauthenticated: 10 msg/s
+		if (this.admins.has(userId)) return 1000; // Admins: 1000 msg/s
+		return 50; // Regular users: 50 msg/s
+	}
+}
+
+export interface Bucket {
+	tokens: number;
+	lastRefill: number;
+}
+
+export type BucketMap<TNames extends string = string> = Map<TNames, Bucket>;
+
+/**
+ * Rate limiter using token bucket algorithm
+ */
+export class RateLimiter<TBucketNames extends string = string> {
+	constructor(
+		/**
+		 * Maximum tokens in bucket (burst capacity)
+		 */
+		public readonly capacity = 100,
+		/**
+		 * Tokens per second
+		 */
+		public readonly refillRate = 100,
+		private readonly buckets: BucketMap<TBucketNames> = new Map(),
+	) {}
+
+	/**
+	 * Check if action is allowed and consume a token
+	 */
+	tryConsume(key: TBucketNames): boolean {
+		const now = Date.now();
+		let bucket = this.buckets.get(key);
+
+		if (!bucket) {
+			bucket = { tokens: this.capacity - 1, lastRefill: now };
+			this.buckets.set(key, bucket);
+			return true;
+		}
+
+		// Refill tokens based on time passed
+		const timePassed = (now - bucket.lastRefill) / 1000;
+		const tokensToAdd = timePassed * this.refillRate;
+		bucket.tokens = Math.min(this.capacity, bucket.tokens + tokensToAdd);
+		bucket.lastRefill = now;
+
+		if (bucket.tokens >= 1) {
+			bucket.tokens -= 1;
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Clear rate limit tracking for a key
+	 */
+	clear(key: TBucketNames): void {
+		this.buckets.delete(key);
+	}
+
+	/**
+	 * Clear all rate limit tracking
+	 */
+	clearAll(): void {
+		this.buckets.clear();
+	}
+}
+
+/**
+ * Authentication validator interface
+ */
+export interface AuthValidator<
+	TAuthContext extends AuthContext = AuthContext,
+	TTokenNames extends string = string,
+> {
+	/**
+	 * Validate authentication token from request headers
+	 * @returns AuthContext if valid, null if invalid
+	 */
+	validate(
+		token: TTokenNames | null,
+		request: Request,
+	): Promise<TAuthContext | null> | TAuthContext | null;
+}
+
+export interface TokenItem<TUserId extends string = string> {
+	readonly userId: TUserId;
+}
+
+export type ValidTokensMap<
+	TTokenNames extends string = string,
+	TUserId extends string = string,
+> = Map<TTokenNames, TokenItem<TUserId>>;
+
+/**
+ * Simple token-based authentication validator
+ */
+export class SimpleAuthValidator<
+	TTokenName extends string = string,
+	TUserId extends string = string,
+	TAuthContext extends AuthContext = AuthContext,
+> implements AuthValidator<TAuthContext, TTokenName>
+{
+	constructor(
+		private readonly validTokens: ValidTokensMap<
+			TTokenName,
+			TUserId
+		> = new Map(),
+	) {}
+
+	validate(token: TTokenName | null): TAuthContext | null {
+		if (!token) return null;
+
+		const user = this.validTokens.get(token);
+		if (!user) return null;
+
+		const result: TAuthContext = {
+			userId: user.userId,
+			permissions: new Set(["*"]),
+			connectedAt: new Date(),
+			lastActivityAt: new Date(),
+		} as unknown as TAuthContext;
+		return result;
+	}
+
+	/**
+	 * Add a valid token
+	 */
+	addToken(token: TTokenName, userId: TUserId): void {
+		this.validTokens.set(token, { userId });
+	}
+
+	/**
+	 * Remove a token
+	 */
+	removeToken(token: TTokenName): void {
+		this.validTokens.delete(token);
+	}
+}
+
+/**
+ * No-op authentication validator (allows all connections)
+ */
+export class NoAuthValidator<TAuthContext extends AuthContext = AuthContext>
+	implements AuthValidator<TAuthContext>
+{
+	validate(_token: string | null): TAuthContext {
+		return {
+			permissions: new Set(["*"]),
+			connectedAt: new Date(),
+			lastActivityAt: new Date(),
+		} as unknown as TAuthContext;
+	}
+}

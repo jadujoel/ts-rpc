@@ -134,3 +134,82 @@ The repository comes with a built-in example:
 1. **Relay**: `bun serve.ts`
 2. **Service**: `bun runner.ts` (Handles `score`, `greet`, `game` requests)
 3. **Client**: `bun client.ts` (Sends requests to the service)
+
+## Advanced Features
+
+### Authentication & Authorization
+
+The server supports token-based authentication and fine-grained authorization:
+
+```typescript
+import { serve } from "./serve.ts";
+import { SimpleAuthValidator, StrictAuthorizationRules } from "./shared/Auth.ts";
+
+// Set up authentication
+const authValidator = new SimpleAuthValidator();
+authValidator.addToken("secret-token", "user123");
+
+// Configure authorization rules
+const authRules = new StrictAuthorizationRules(
+  ["admin"],  // Admin users
+  new Map([
+    ["chat", new Set(["user123", "admin"])],  // Who can access topics
+  ])
+);
+
+const server = serve({
+  authValidator,
+  authRules,
+  enableRateLimit: true,
+  maxMessageSize: 1024 * 1024,  // 1MB max
+});
+```
+
+Clients authenticate with tokens:
+```typescript
+const client = RpcPeer.FromOptions({
+  url: "ws://localhost:3000/chat?token=secret-token",
+  // ...
+});
+```
+
+### Session Persistence
+
+Clients can restore their identity after reconnection:
+
+```typescript
+// First connection - save session ID
+client.addEventListener("welcome", (ev) => {
+  localStorage.setItem("sessionId", ev.detail.sessionId);
+});
+
+// Reconnect with same session
+const sessionId = localStorage.getItem("sessionId");
+const client = RpcPeer.FromOptions({
+  sessionId,  // Restores previous clientId
+  url: "ws://localhost:3000/chat",
+});
+```
+
+### Heartbeat / Keep-Alive
+
+Enable automatic heartbeat to detect zombie connections:
+
+```typescript
+const client = RpcPeer.FromOptions({
+  url: "ws://localhost:3000/chat",
+  enableHeartbeat: true,
+  heartbeatInterval: 30000,  // 30 seconds
+});
+```
+
+### Rate Limiting & Resource Limits
+
+Built-in protection against abuse:
+- Message size limits (default: 1MB)
+- Rate limiting per user (token bucket algorithm)
+- Automatic cleanup on disconnect
+
+See `example-auth.ts` for complete demonstration.
+
+**Full Documentation:** See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed implementation guide.
