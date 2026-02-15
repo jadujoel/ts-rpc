@@ -312,7 +312,9 @@ export class RpcPeer<
 		return this.clientId !== undefined;
 	}
 
-	waitForWelcome(timeout = RpcPeer.Timeouts.Welcome): Promise<TClientId> {
+	waitForWelcome(
+		timeout: number = RpcPeer.Timeouts.Welcome,
+	): Promise<TClientId> {
 		if (this.clientId !== undefined) {
 			return Promise.resolve(this.clientId);
 		}
@@ -342,7 +344,7 @@ export class RpcPeer<
 	close(
 		code: WebSocketCloseCode = WS_CLOSE_NORMAL,
 		reason = getCloseCodeDescription(code),
-		timeout = RpcPeer.Timeouts.Close,
+		timeout: number = RpcPeer.Timeouts.Close,
 	): Promise<void> {
 		const timeId = `Peer Close ${this.clientId}`;
 		console.time(timeId);

@@ -55,11 +55,11 @@ export function serve({
 			"/": home,
 		},
 		async fetch(request, server): Promise<Response> {
-			time(`Request ${request.url}`);
 			if (BANNED_STRINGS.some((banned) => request.url.includes(banned))) {
 				return new Response("404");
 			}
 
+			console.time(`Request ${request.url}`);
 			if (request.headers.get("upgrade")) {
 				const data = getWebSocketData(request);
 				if (!server.upgrade(request, { data })) {
@@ -68,7 +68,6 @@ export function serve({
 			}
 
 			const response = await getResponse(request, server);
-			timeEnd(`Request ${request.url}`);
 			return response;
 		},
 		websocket: <WebSocketHandler<WebSocketData>>{

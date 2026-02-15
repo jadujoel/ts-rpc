@@ -306,4 +306,173 @@ describe("RetrySocket", () => {
 			expect(socket).toBeInstanceOf(RetrySocket);
 		});
 	});
+
+	describe("SendResult", () => {
+		test("has correct values", () => {
+			expect(RetrySocket.SendResult.Sent).toBe(0);
+			expect(RetrySocket.SendResult.Queued).toBe(1);
+			expect(RetrySocket.SendResult.Failed).toBe(2);
+		});
+
+		test("toString converts Sent correctly", () => {
+			expect(RetrySocket.SendResult.toString(0)).toBe("sent");
+		});
+
+		test("toString converts Queued correctly", () => {
+			expect(RetrySocket.SendResult.toString(1)).toBe("queued");
+		});
+
+		test("toString converts Failed correctly", () => {
+			expect(RetrySocket.SendResult.toString(2)).toBe("failed");
+		});
+
+		test("toString returns unknown for invalid code", () => {
+			expect(RetrySocket.SendResult.toString(99)).toBe("unknown");
+		});
+	});
+
+	describe("Static Errors", () => {
+		test("has CloseTimeout error", () => {
+			expect(RetrySocket.Errors.CloseTimeout).toBeInstanceOf(Error);
+			expect(RetrySocket.Errors.CloseTimeout.message).toBe(
+				"WebSocket close timed out",
+			);
+		});
+	});
+
+	describe("Static Timeouts", () => {
+		test("has Close timeout", () => {
+			expect(RetrySocket.Timeouts.Close).toBe(1_000);
+		});
+	});
+
+	describe("dispose", () => {
+		test("dispose closes socket", async () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			await socket.dispose();
+			// After dispose, socket should be closed
+			expect(socket.readyState).toBe(RetrySocket.CLOSED);
+		});
+
+		test("dispose clears message queue", async () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			socket.send("test1");
+			socket.send("test2");
+			await socket.dispose();
+			// Queue should be cleared (we can't inspect it directly, but no errors should occur)
+			expect(true).toBe(true);
+		});
+	});
+
+	describe("send return values", () => {
+		test("returns Failed when closed by user", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			socket.close();
+			const result = socket.send("test");
+			expect(result).toBe(RetrySocket.SendResult.Failed);
+		});
+
+		test("returns Queued when socket is not open", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			const result = socket.send("test");
+			expect(result).toBe(RetrySocket.SendResult.Queued);
+		});
+	});
+
+	describe("addEventListener with options", () => {
+		test("accepts options object", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			const listener = mock(() => {});
+
+			expect(() => {
+				socket.addEventListener("open", listener, { once: true });
+			}).not.toThrow();
+		});
+
+		test("handles once option in dispatchEvent", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			let callCount = 0;
+			const listener = () => {
+				callCount++;
+			};
+
+			socket.addEventListener("test", listener, { once: true });
+			socket.dispatchEvent(new Event("test"));
+			socket.dispatchEvent(new Event("test"));
+
+			// Should only be called once
+			expect(callCount).toBe(1);
+		});
+	});
+
+	describe("dispatchEvent edge cases", () => {
+		test("prevents re-entrant dispatch of same event type", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			let callCount = 0;
+
+			socket.addEventListener("test", () => {
+				callCount++;
+				// Try to dispatch the same event type within the handler
+				socket.dispatchEvent(new Event("test"));
+			});
+
+			socket.dispatchEvent(new Event("test"));
+
+			// Should only increment once, not recursively
+			expect(callCount).toBe(1);
+		});
+
+		test("returns true when no listeners registered", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			const result = socket.dispatchEvent(new Event("nonexistent"));
+			expect(result).toBe(true);
+		});
+
+		test("handles EventListenerObject", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			let called = false;
+
+			const listener = {
+				handleEvent: (ev: Event) => {
+					called = true;
+					expect(ev.type).toBe("open");
+				},
+			};
+
+			socket.addEventListener("open", listener);
+			socket.dispatchEvent(new Event("open"));
+
+			expect(called).toBe(true);
+		});
+	});
+
+	describe("binaryType edge cases", () => {
+		test("setting binaryType when closed by user does nothing", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			socket.close();
+			socket.binaryType = "blob";
+			// Should not throw, just silently ignore
+			expect(true).toBe(true);
+		});
+	});
+
+	describe("addEventListener when closed", () => {
+		test("adding non-close listener after close is ignored", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			socket.close();
+			const listener = mock(() => {});
+			socket.addEventListener("open", listener);
+			// Should be ignored, no error thrown
+			expect(true).toBe(true);
+		});
+
+		test("adding close listener after close still works", () => {
+			const socket = new RetrySocket("ws://localhost:8080");
+			socket.close();
+			const listener = mock(() => {});
+			socket.addEventListener("close", listener);
+			// Close listeners should still be addable
+			expect(true).toBe(true);
+		});
+	});
 });

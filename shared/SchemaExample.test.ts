@@ -149,4 +149,93 @@ describe("API Schemas", () => {
 			});
 		});
 	});
+
+	describe("Edge cases", () => {
+		test("rejects empty object for request", () => {
+			const data = {};
+			const result = RequestApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects empty object for response", () => {
+			const data = {};
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects null for request", () => {
+			const result = RequestApiSchemaExample.safeParse(null);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects null for response", () => {
+			const result = ResponseApiSchemaExample.safeParse(null);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects array for request", () => {
+			const result = RequestApiSchemaExample.safeParse([]);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects array for response", () => {
+			const result = ResponseApiSchemaExample.safeParse([]);
+			expect(result.success).toBe(false);
+		});
+
+		test("handles extra fields in request", () => {
+			const data = { type: "unknown", extraField: "value" };
+			const result = RequestApiSchemaExample.safeParse(data);
+			// Zod discriminated unions typically strip extra fields, so this should pass
+			expect(result.success).toBe(true);
+		});
+
+		test("handles extra fields in response", () => {
+			const data = { type: "unknown", extraField: "value" };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("validates greet with empty string name", () => {
+			const data = { type: "greet", name: "" };
+			const result = RequestApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("validates greet response with empty greeting", () => {
+			const data = { type: "greet", greeting: "" };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("validates score with zero", () => {
+			const data = { type: "score", score: 0 };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("validates score with negative number", () => {
+			const data = { type: "score", score: -100 };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("validates score with decimal number", () => {
+			const data = { type: "score", score: 42.5 };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(true);
+		});
+
+		test("rejects game response without name", () => {
+			const data = { type: "game" };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(false);
+		});
+
+		test("rejects greet response without greeting", () => {
+			const data = { type: "greet" };
+			const result = ResponseApiSchemaExample.safeParse(data);
+			expect(result.success).toBe(false);
+		});
+	});
 });

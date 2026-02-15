@@ -9,10 +9,11 @@ export type OnMessageHandler =
 	| null;
 export type OnCloseHandler = ((this: WebSocket, ev: CloseEvent) => any) | null;
 export type OnErrorHandler = ((this: WebSocket, ev: Event) => any) | null;
-export type EventListenerMap = Map<
-	string,
-	Set<EventListenerOrEventListenerObject>
->;
+export type EventListenerMap<
+	TEventNames extends string = string,
+	TSet extends
+		Set<EventListenerOrEventListenerObject> = Set<EventListenerOrEventListenerObject>,
+> = Map<TEventNames, TSet>;
 
 export interface RetrySocketFromOptions<TUrl extends string = string> {
 	/** @default "arraybuffer" */
@@ -314,8 +315,8 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	public addEventListener(
-		type: RetrySocketEventName,
-		listener: EventListener,
+		type: RetrySocketEventName | (string & {}),
+		listener: EventListener | EventListenerObject,
 		options?: boolean | AddEventListenerOptions,
 	): void {
 		if (this.isClosedByUser && type !== "close") {
@@ -341,11 +342,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	public dispatchEvent(event: CloseEvent | Event): boolean {
-		console.debug(`[RS] Dispatch Event ${event.type}`);
-
 		// Prevent re-entrant dispatch of the same event type
 		if (this.dispatchingEvents.has(event.type)) {
-			console.warn(
+			console.debug(
 				`[RS] Event "${event.type}" is already being dispatched, skipping`,
 			);
 			return false;

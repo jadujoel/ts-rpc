@@ -4,7 +4,6 @@ import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
 } from "./shared/SchemaExample";
-import { WS_CLOSE_GOING_AWAY } from "./shared/WebSocketCloseCodes.ts";
 
 export async function example() {
 	const server = serve({
@@ -75,15 +74,15 @@ export async function example() {
 	console.log("Greeting:", greeting.data);
 
 	await Promise.all([
-		peer1.close(WS_CLOSE_GOING_AWAY, "Going Away"),
-		peer2.close(),
+		peer1.dispose(),
+		peer2.dispose(),
 	]);
 	console.log("Stopping server...");
 
 	// using true to force close works.
 	// await server.stop(true);
 	// This hangs for some reason, likely due to the way the RetrySocket is implemented and how it handles close. Needs investigation.
-	await server.stop(false);
+	await server.stop(true);
 	console.log("Server stopped.");
 }
 

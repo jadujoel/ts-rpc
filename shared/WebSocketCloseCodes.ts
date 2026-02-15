@@ -271,6 +271,6 @@ export function canReconnect(code: WebSocketCloseCode | number): boolean {
  */
 export function getCloseCodeDescription<
 	const TCode extends WebSocketCloseCode = WebSocketCloseCode,
->(code: TCode): WebSocketCloseCodeDescription<TCode> {
-	return WS_CLOSE_CODE_DESCRIPTIONS[code] ?? "Unknown";
+>(code: TCode | number): WebSocketCloseCodeDescription<TCode> | "Unknown" {
+	return WS_CLOSE_CODE_DESCRIPTIONS[code as TCode] ?? "Unknown";
 }
