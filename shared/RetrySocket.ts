@@ -1,5 +1,6 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: safe usage */
 /** biome-ignore-all lint/suspicious/noExplicitAny: Explicit */
+
 export type MessageQueueItem = string | ArrayBuffer | Blob | ArrayBufferView;
 export type MessageQueue = MessageQueueItem[];
 export type OnOpenHandler = ((this: WebSocket, ev: Event) => any) | null;
@@ -41,6 +42,8 @@ export interface RetrySocketFromOptions<TUrl extends string = string> {
 	readonly url: TUrl;
 }
 
+export type RetrySocketEventName = "message" | "open" | "close" | "error";
+
 export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	public static readonly CONNECTING: 0 = 0;
 	public static readonly OPEN: 1 = 1;
@@ -61,6 +64,32 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		reconnectInterval: 1_000,
 		socket: null,
 	};
+
+	public static SendResult = {
+		Sent: 0,
+		Queued: 1,
+		Failed: 2,
+		toString(result: number): "sent" | "queued" | "failed" | "unknown" {
+			switch (result) {
+				case RetrySocket.SendResult.Sent:
+					return "sent";
+				case RetrySocket.SendResult.Queued:
+					return "queued";
+				case RetrySocket.SendResult.Failed:
+					return "failed";
+				default:
+					return "unknown";
+			}
+		},
+	} as const;
+
+	public static readonly Errors = {
+		CloseTimeout: new Error("WebSocket close timed out"),
+	} as const;
+
+	public static readonly Timeouts = {
+		Close: 1_000,
+	} as const;
 
 	static FromOptions<TUrl extends string = string>(
 		options: RetrySocketFromOptions<TUrl>,
@@ -100,7 +129,12 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		private messageQueue: MessageQueue = [],
 		private eventListeners: Map<
 			string,
-			Set<EventListenerOrEventListenerObject>
+			Set<
+				readonly [
+					listener: EventListenerOrEventListenerObject,
+					options: boolean | AddEventListenerOptions | undefined,
+				]
+			>
 		> = new Map(),
 		private isClosedByUser = false,
 		private _binaryType: BinaryType = "arraybuffer",
@@ -114,7 +148,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		public readonly CLOSED: 3 = RetrySocket.CLOSED,
 	) {}
 
-	private connect() {
+	private connect(): void {
 		if (this.isClosedByUser) {
 			return;
 		}
@@ -123,34 +157,50 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		this.socket.binaryType = this._binaryType;
 
 		this.socket.onopen = (event) => {
+			if (this.isClosedByUser) {
+				return;
+			}
 			this.reconnectAttempts = 0;
 			this.flushMessageQueue();
-			if (this.onopen) this.onopen.call(this.socket!, event);
+			if (this.onopen) {
+				this.onopen.call(this.socket!, event);
+			}
 			this.dispatchEvent(new Event("open"));
 		};
 
 		this.socket.onmessage = (event) => {
-			if (this.onmessage) this.onmessage.call(this.socket!, event);
+			if (this.isClosedByUser) {
+				return;
+			}
+			if (this.onmessage) {
+				this.onmessage.call(this.socket!, event);
+			}
 			this.dispatchEvent(event);
 		};
 
 		this.socket.onclose = (event) => {
-			if (this.onclose && this.isClosedByUser) {
+			if (this.isClosedByUser) {
+				return;
+			}
+			if (this.onclose) {
 				this.onclose.call(this.socket!, event);
 			}
-			if (!this.isClosedByUser) {
-				this.scheduleReconnect();
-			}
+			this.scheduleReconnect();
 			this.dispatchEvent(new CloseEvent("close", event));
 		};
 
 		this.socket.onerror = (event) => {
-			if (this.onerror) this.onerror.call(this.socket!, event);
+			if (this.isClosedByUser) {
+				return;
+			}
+			if (this.onerror) {
+				this.onerror.call(this.socket!, event);
+			}
 			this.dispatchEvent(new Event("error", event));
 		};
 	}
 
-	private scheduleReconnect() {
+	private scheduleReconnect(): void {
 		if (this.isClosedByUser) {
 			return;
 		}
@@ -159,13 +209,13 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 			this.maxReconnectInterval,
 		);
 		this.reconnectAttempts++;
-		console.log(
+		console.debug(
 			`Reconnecting in ${delay}ms... (Attempt ${this.reconnectAttempts})`,
 		);
-		setTimeout(() => this.connect(), delay);
+		global.setTimeout(() => this.connect(), delay);
 	}
 
-	private flushMessageQueue() {
+	private flushMessageQueue(): void {
 		if (this.isClosedByUser) {
 			return;
 		}
@@ -180,21 +230,26 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
-	public send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
+	public send(
+		data: string | ArrayBuffer | Blob | ArrayBufferView,
+	):
+		| typeof RetrySocket.SendResult.Failed
+		| typeof RetrySocket.SendResult.Queued
+		| typeof RetrySocket.SendResult.Sent {
 		if (this.isClosedByUser) {
-			return;
+			return RetrySocket.SendResult.Failed;
 		}
 		if (this.socket && this.socket.readyState === WebSocket.OPEN) {
 			this.socket.send(data);
-		} else {
-			this.messageQueue.push(data);
+			return RetrySocket.SendResult.Sent;
 		}
+		this.messageQueue.push(data);
+		return RetrySocket.SendResult.Queued;
 	}
 
-	public close(code?: number, reason?: string): void {
-		this.isClosedByUser = true;
-		if (this.socket) {
-			this.socket.close(code, reason);
+	public async dispose(): Promise<void> {
+		try {
+			await this.close();
 			this.socket = null;
 			this.messageQueue = [];
 			this.eventListeners.clear();
@@ -202,46 +257,85 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 			this.onerror = null;
 			this.onmessage = null;
 			this.onopen = null;
+		} catch (error) {
+			console.debug("Error disposing RetrySocket:", error);
 		}
 	}
 
-	public addEventListener(
-		type: string,
-		listener: EventListenerOrEventListenerObject,
-		_options?: boolean | AddEventListenerOptions,
-	) {
+	public close(
+		code?: number,
+		reason?: string,
+		timeout = RetrySocket.Timeouts.Close,
+	): Promise<void> {
 		if (this.isClosedByUser) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve, reject) => {
+			this.isClosedByUser = true;
+			if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
+				resolve();
+				return;
+			}
+
+			const closeHandler = (): void => {
+				global.clearTimeout(timeoutId);
+				this.socket?.removeEventListener("close", closeHandler);
+				resolve();
+			};
+
+			const timeoutHandler = (): void => {
+				this.socket?.removeEventListener("close", closeHandler);
+				reject(RetrySocket.Errors.CloseTimeout);
+			};
+
+			const timeoutId = global.setTimeout(timeoutHandler, timeout);
+			this.socket.addEventListener("close", closeHandler, { once: true });
+
+			this.socket.close(code, reason);
+		});
+	}
+
+	public addEventListener(
+		type: RetrySocketEventName,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions,
+	): void {
+		console.debug(`[RS] Add event listener ${type}`);
+		if (this.isClosedByUser && type !== "close") {
+			console.debug(`[RS] Failed to add listener (closed by user)`);
 			return;
 		}
 		if (!this.eventListeners.has(type)) {
 			this.eventListeners.set(type, new Set());
 		}
-		this.eventListeners.get(type)!.add(listener);
+		this.eventListeners.get(type)!.add([listener, options] as const);
 	}
 
 	public removeEventListener(
-		type: string,
+		type: RetrySocketEventName | (string & {}),
 		listener: EventListenerOrEventListenerObject,
-		_options?: boolean | EventListenerOptions,
-	) {
+		options?: boolean | EventListenerOptions,
+	): void {
 		if (this.isClosedByUser) {
+			console.debug(`[RS] Failed to remove listener (closed by user)`);
 			return;
 		}
 		if (this.eventListeners.has(type)) {
-			this.eventListeners.get(type)!.delete(listener);
+			this.eventListeners.get(type)!.delete([listener, options] as const);
 		}
 	}
 
-	public dispatchEvent(event: Event): boolean {
+	public dispatchEvent(event: CloseEvent | Event): boolean {
 		if (this.isClosedByUser) {
 			return false;
 		}
 		const listeners = this.eventListeners.get(event.type);
 		if (!listeners) {
-			return true; // Per EventTarget spec, return true if no listeners canceled it (assuming no cancelable logic implemented here properly yet)
+			// Per EventTarget spec, return true if no listeners canceled it (assuming no cancelable logic implemented here properly yet)
+			return true;
 		}
 		let result = true;
-		for (const listener of listeners) {
+		for (const [listener, options] of listeners) {
 			if (typeof listener === "function") {
 				listener.call(this, event);
 			} else {
@@ -249,6 +343,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 			}
 			if (event.defaultPrevented) {
 				result = false;
+			}
+			if (typeof options === "object" && options.once) {
+				this.removeEventListener(event.type, listener, options);
 			}
 		}
 		return result;

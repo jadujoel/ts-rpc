@@ -74,8 +74,10 @@ export async function example() {
 
 	console.log("Greeting:", greeting.data);
 
-	peer1.close(WS_CLOSE_GOING_AWAY, "Going Away");
-	peer2.close();
+	await Promise.all([
+		peer1.close(WS_CLOSE_GOING_AWAY, "Going Away"),
+		peer2.close(),
+	]);
 	console.log("Stopping server...");
 
 	// using true to force close works.

@@ -134,6 +134,33 @@ export type MatchHandler<
 	from?: TFrom,
 ) => Promise<TResponseApi | undefined> | TResponseApi | undefined;
 
+export type RpcPeerEventMap = {
+	readonly open: Event;
+	readonly close: CloseEvent;
+	readonly error: Event;
+	readonly welcome: CustomEvent<RpcWelcome>;
+	readonly request: CustomEvent<RpcRequest>;
+	readonly response: CustomEvent<RpcResponse>;
+};
+export function isWelcomeMessage<TClientId extends string = string>(
+	message: unknown,
+	clientId?: TClientId,
+): message is RpcWelcome<TClientId> {
+	if (typeof message !== "object" || message === null) {
+		return false;
+	}
+	const tmessage = message as {
+		readonly category?: unknown;
+		readonly clientId?: unknown;
+	};
+	if (clientId !== undefined) {
+		if (tmessage.clientId !== clientId) {
+			return false;
+		}
+	}
+	return tmessage.category === "welcome";
+}
+
 export class RpcPeer<
 	TRequestSchema extends z.Schema<ExplicitAny> = z.Schema<ExplicitAny>,
 	TResponseSchema extends z.Schema<ExplicitAny> = z.Schema<ExplicitAny>,
@@ -153,6 +180,33 @@ export class RpcPeer<
 		public readonly responseSchema: TResponseSchema | undefined,
 	) {
 		super();
+	}
+
+	public static readonly MessageSchema = RpcMessageSchema;
+	public static readonly Errors = {
+		InvalidMessageFormat: new Error("Invalid message format"),
+		InvalidRequestData: new Error("Invalid request data"),
+		InvalidResponseData: new Error("Invalid response data"),
+		RequestTimedOut: new Error("Request timed out"),
+		ConnectionClosed: new Error("Connection closed"),
+	} as const;
+
+	public static ResponseEvent<const TRpcResponse extends RpcResponse>(
+		detail: TRpcResponse,
+	): CustomEvent<TRpcResponse> {
+		return new CustomEvent("response", { detail });
+	}
+
+	public static RequestEvent<const TRpcRequest extends RpcRequest>(
+		detail: TRpcRequest,
+	): CustomEvent<TRpcRequest> {
+		return new CustomEvent("request", { detail });
+	}
+
+	public static WelcomeEvent<const TRpcWelcome extends RpcWelcome>(
+		detail: TRpcWelcome,
+	): CustomEvent<TRpcWelcome> {
+		return new CustomEvent("welcome", { detail });
 	}
 
 	public static FromOptions<
@@ -209,6 +263,18 @@ export class RpcPeer<
 		return peer;
 	}
 
+	public static Timeouts = {
+		Request: 10_000,
+		Close: 1_000,
+		Welcome: 10_000,
+	} as const;
+
+	async dispose(): Promise<void> {
+		console.debug("[Peer] Disposing peer and closing socket");
+		await this.close();
+		this.retrySocket.dispose();
+	}
+
 	get state(): "closed" | "connecting" | "open" | "closing" {
 		const states = ["connecting", "open", "closing", "closed"] as const;
 		return states[this.retrySocket.readyState] ?? "closed";
@@ -218,32 +284,85 @@ export class RpcPeer<
 		return this.clientId !== undefined;
 	}
 
-	waitForWelcome(timeout = 10_000): Promise<TClientId> {
+	waitForWelcome(timeout = RpcPeer.Timeouts.Welcome): Promise<TClientId> {
 		if (this.clientId !== undefined) {
 			return Promise.resolve(this.clientId);
 		}
 
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.removeEventListener("welcome", welcomeHandler);
-				reject(new Error("Welcome Timed Out"));
+			const welcomeHandler = (ev: CustomEvent<RpcWelcome<TClientId>>): void => {
+				const isWelcome = isWelcomeMessage(ev.detail, this.clientId);
+				if (!isWelcome) {
+					return;
+				}
+				this.removeEventListener("welcome", welcomeHandler as EventListener);
+				global.clearTimeout(timer);
+				resolve(ev.detail.clientId);
+			};
+
+			const timer = global.setTimeout(() => {
+				this.removeEventListener("welcome", welcomeHandler as EventListener);
+				reject(RpcPeer.Errors.RequestTimedOut);
 			}, timeout);
 
-			const welcomeHandler = (ev: Event) => {
-				const customEv = ev as CustomEvent<{ clientId: TClientId }>;
-				this.removeEventListener("welcome", welcomeHandler);
-				clearTimeout(timer);
-				resolve(customEv.detail.clientId);
-			};
-			this.addEventListener("welcome", welcomeHandler);
+			this.addEventListener("welcome", welcomeHandler as EventListener, {
+				once: true,
+			});
 		});
 	}
 
 	close(
 		code: WebSocketCloseCode = WS_CLOSE_NORMAL,
 		reason = getCloseCodeDescription(code),
-	): void {
-		this.retrySocket.close(code, reason);
+		timeout = RpcPeer.Timeouts.Close,
+	): Promise<void> {
+		console.debug(`[Peer] Closing: ${reason}`);
+		return new Promise((resolve) => {
+			if (this.state === "closed") {
+				console.debug("[Peer] Already closed");
+				resolve();
+				return;
+			}
+			// Reject all pending promises before closing
+			for (const item of this.pendingPromises.values()) {
+				global.clearTimeout(item.timer);
+				item.reject(RpcPeer.Errors.ConnectionClosed);
+			}
+			this.pendingPromises.clear();
+
+			// If already closed, resolve immediately
+			if (this.retrySocket.readyState === 3) {
+				// CLOSED
+				console.debug("[Peer] socket readystate closed");
+				resolve();
+				return;
+			}
+
+			// Register close handler before calling close
+			// This is important because RetrySocket.close() sets isClosedByUser = true
+			// which would prevent addEventListener from working
+			const closeHandler = () => {
+				console.debug(`[Peer] Socket closed, code: ${code}, reason: ${reason}`);
+				global.clearTimeout(closeTimeout);
+				this.retrySocket.removeEventListener("close", closeHandler);
+				resolve();
+			};
+
+			this.retrySocket.addEventListener("close", closeHandler);
+
+			// Set up timeout to prevent waiting forever
+			const closeTimeout = global.setTimeout(() => {
+				console.warn(
+					`[Peer] Close timed out after ${timeout}ms, forcing close`,
+				);
+				this.retrySocket.removeEventListener("close", closeHandler);
+				resolve();
+			}, timeout);
+
+			// Close the socket - this sets isClosedByUser = true and clears listeners
+			// But we registered our listener above, so it should fire first
+			this.retrySocket.close(code, reason);
+		});
 	}
 
 	handleMessage(ev: MessageEvent): Success {
@@ -252,7 +371,7 @@ export class RpcPeer<
 			const parsed = RpcMessageSchema.safeParse(json);
 
 			if (!parsed.success) {
-				console.warn("[Socket] Invalid message format:", parsed.error);
+				console.warn("[Peer] Invalid message format:", parsed.error);
 				return false;
 			}
 
@@ -260,8 +379,8 @@ export class RpcPeer<
 
 			if (message.category === "welcome") {
 				this.clientId = message.clientId as TClientId;
-				console.debug(`[Socket] Assigned ID: ${this.clientId}`);
-				this.dispatchEvent(new CustomEvent("welcome", { detail: message }));
+				console.debug(`[Peer] Assigned ID: ${this.clientId}`);
+				this.dispatchEvent(RpcPeer.WelcomeEvent(message));
 				return true;
 			}
 
@@ -270,33 +389,34 @@ export class RpcPeer<
 				if (this.requestSchema !== undefined) {
 					const valid = this.requestSchema.safeParse(message.data);
 					if (!valid.success) {
-						console.debug("[Socket] Invalid request data:", valid.error);
+						console.debug("[Peer] Invalid request data:", valid.error);
 						return false;
 					}
 				}
-				this.dispatchEvent(new CustomEvent("request", { detail: message }));
+				this.dispatchEvent(RpcPeer.RequestEvent(message));
 			} else if (message.category === "response") {
 				const pending = this.pendingPromises.get(message.requestId);
 				if (pending) {
 					if (this.responseSchema !== undefined) {
 						const valid = this.responseSchema.safeParse(message.data);
 						if (!valid.success) {
-							pending.reject(
-								new Error(`Invalid response schema: ${valid.error.message}`),
+							console.debug(
+								`[Peer] Invalid response data: ${valid.error.message}`,
 							);
-							clearTimeout(pending.timer);
+							pending.reject(RpcPeer.Errors.InvalidResponseData);
+							global.clearTimeout(pending.timer);
 							this.pendingPromises.delete(message.requestId);
 							return false;
 						}
 					}
 
 					pending.resolve(message);
-					clearTimeout(pending.timer);
+					global.clearTimeout(pending.timer);
 					this.pendingPromises.delete(message.requestId);
 				}
 			}
 		} catch (err) {
-			console.debug("[Socket] message error", err);
+			console.debug("[Peer] message error", err);
 			return false;
 		}
 		return true;
@@ -315,7 +435,7 @@ export class RpcPeer<
 
 	request<TResponse = TResponseApi>(
 		data: TRequestApi,
-		timeout = 10_000,
+		timeout = RpcPeer.Timeouts.Request,
 	): Promise<RpcResponse<TResponse>> {
 		const requestId = crypto.randomUUID();
 
@@ -330,10 +450,10 @@ export class RpcPeer<
 		const { promise, resolve, reject } =
 			Promise.withResolvers<RpcResponse<TResponse>>();
 
-		const timer = setTimeout(() => {
+		const timer = global.setTimeout(() => {
 			if (this.pendingPromises.has(requestId)) {
 				this.pendingPromises.delete(requestId);
-				reject(new Error("Request Timed Out"));
+				reject(RpcPeer.Errors.RequestTimedOut);
 			}
 		}, timeout);
 
@@ -377,7 +497,7 @@ export class RpcPeer<
 					this.respondTo(req, result);
 				}
 			} catch (err) {
-				console.error("[Socket] Match handler error", err);
+				console.error("[Peer] Match handler error", err);
 			}
 		});
 	}

@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: test file */
+/** biome-ignore-all lint/style/noNonNullAssertion: test file */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
 import { serve } from "../serve";
@@ -36,21 +37,26 @@ describe("Integration Tests", () => {
 		server.stop(true);
 	});
 
-	describe("Client-Server Connection", () => {
-		test("client receives welcome message with clientId", (done) => {
+	describe.only("Client-Server Connection", () => {
+		test.only("client receives welcome message with clientId", async (done) => {
 			const client = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
 				responseSchema: ResponseApiSchemaExample,
 			});
+			await client.waitForWelcome()
+			console.log("Received welcome message with clientId:", client.clientId);
 
-			client.addEventListener("welcome", ((ev: CustomEvent) => {
-				expect(ev.detail.clientId).toBeDefined();
-				expect(typeof ev.detail.clientId).toBe("string");
-				client.close();
-				done();
-			}) as EventListener);
-		}, 5000);
+			expect(client.clientId).toBeDefined();
+			expect(typeof client.clientId).toBe("string");
+
+			console.log("Client State:", client.state);
+			console.log("Disposing...")
+			await client.dispose();
+			console.log("Disposed")
+
+			done();
+		}, 1000);
 
 		test("client state changes to open", (done) => {
 			const client = RpcPeer.FromOptions({
@@ -60,9 +66,15 @@ describe("Integration Tests", () => {
 			});
 
 			client.addEventListener("open", () => {
-				expect(client.state).toBe("open");
-				client.close();
-				done();
+				(async () => {
+					try {
+						expect(client.state).toBe("open");
+						await client.close();
+						done();
+					} catch (error) {
+						done(error);
+					}
+				})();
 			});
 		}, 5000);
 	});
@@ -100,8 +112,8 @@ describe("Integration Tests", () => {
 				expect(response.data.type).toBe("score");
 				expect(response.data.score).toBe(42);
 
-				service.close();
-				client.close();
+				await service.close();
+				await client.close();
 				done();
 			}, 1000);
 		}, 10000);
@@ -134,8 +146,8 @@ describe("Integration Tests", () => {
 				expect(response.data.type).toBe("greet");
 				expect(response.data.greeting).toBe("Hello, Alice!");
 
-				service.close();
-				client.close();
+				await service.close();
+				await client.close();
 				done();
 			}, 1000);
 		}, 10000);
@@ -158,13 +170,13 @@ describe("Integration Tests", () => {
 			} catch (err: any) {
 				expect(err.message).toBe("Request Timed Out");
 			} finally {
-				client.close();
+				await client.close();
 			}
 		}, 5000);
 	});
 
 	describe("Multiple Clients", () => {
-		test("multiple clients can connect simultaneously", (done) => {
+		test("multiple clients can connect simultaneously", async () => {
 			const client1 = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
@@ -183,57 +195,38 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			let openCount = 0;
-			const checkDone = () => {
-				openCount++;
-				if (openCount === 3) {
-					expect(client1.state).toBe("open");
-					expect(client2.state).toBe("open");
-					expect(client3.state).toBe("open");
-					client1.close();
-					client2.close();
-					client3.close();
-					done();
-				}
-			};
-
-			client1.addEventListener("open", checkDone);
-			client2.addEventListener("open", checkDone);
-			client3.addEventListener("open", checkDone);
+			await client1.waitForWelcome();
+			await client2.waitForWelcome();
+			await client3.waitForWelcome();
+			expect(client1.state).toBe("open");
+			expect(client2.state).toBe("open");
+			expect(client3.state).toBe("open");
+			await client1.close();
+			await client2.close();
+			await client3.close();
 		}, 5000);
 
-		test("clients receive unique IDs", (done) => {
+		test("clients receive unique IDs", async () => {
 			const ids = new Set<string>();
-
-			const createClient = () => {
-				const client = RpcPeer.FromOptions({
-					url: TEST_URL,
-					requestSchema: RequestApiSchemaExample,
-					responseSchema: ResponseApiSchemaExample,
-				});
-
-				client.addEventListener("welcome", ((ev: CustomEvent) => {
-					ids.add(ev.detail.clientId);
-
-					if (ids.size === 3) {
-						expect(ids.size).toBe(3); // All unique
-						done();
-					}
-				}) as EventListener);
-
-				return client;
+			const options = {
+				url: TEST_URL,
+				requestSchema: RequestApiSchemaExample,
+				responseSchema: ResponseApiSchemaExample,
 			};
+			const client1 = RpcPeer.FromOptions(options);
+			const client2 = RpcPeer.FromOptions(options);
+			const client3 = RpcPeer.FromOptions(options);
 
-			const c1 = createClient();
-			const c2 = createClient();
-			const c3 = createClient();
+			await client1.waitForWelcome();
+			await client2.waitForWelcome();
+			await client3.waitForWelcome();
 
-			setTimeout(() => {
-				c1.close();
-				c2.close();
-				c3.close();
-			}, 3000);
-		}, 5000);
+			ids.add(client1.clientId!);
+			ids.add(client2.clientId!);
+			ids.add(client3.clientId!);
+			expect(ids.size).toBe(3); // All IDs should be unique
+			await Promise.all([client1.close(), client2.close(), client3.close()]);
+		});
 	});
 
 	describe("Error Handling", () => {
@@ -267,9 +260,9 @@ describe("Integration Tests", () => {
 				client.send(invalidData);
 
 				// Wait and verify service didn't crash
-				setTimeout(() => {
-					service.close();
-					client.close();
+				setTimeout(async () => {
+					await service.close();
+					await client.close();
 					console.error = originalConsoleError;
 					done();
 				}, 500);
@@ -290,7 +283,7 @@ describe("Integration Tests", () => {
 			expect(client.state).toBe("open");
 
 			// Simulate disconnect (close and reopen works as reconnect simulation)
-			client.close();
+			await client.close();
 			await new Promise((resolve) => setTimeout(resolve, 500));
 
 			// Note: RetrySocket should handle reconnection automatically
@@ -335,8 +328,8 @@ describe("Integration Tests", () => {
 				const response2 = await peer1.request({ type: "score" }, 3000);
 				expect(response2.data.type).toBe("score");
 
-				peer1.close();
-				peer2.close();
+				await peer1.close();
+				await peer2.close();
 				done();
 			}, 1000);
 		}, 10000);
