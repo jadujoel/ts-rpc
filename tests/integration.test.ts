@@ -44,19 +44,21 @@ describe("Integration Tests", () => {
 				requestSchema: RequestApiSchemaExample,
 				responseSchema: ResponseApiSchemaExample,
 			});
-			await client.waitForWelcome()
+			await client.waitForWelcome();
 			console.log("Received welcome message with clientId:", client.clientId);
 
 			expect(client.clientId).toBeDefined();
 			expect(typeof client.clientId).toBe("string");
 
 			console.log("Client State:", client.state);
-			console.log("Disposing...")
+			console.log("Disposing...");
+			console.time("Dispose");
 			await client.dispose();
-			console.log("Disposed")
+			console.timeEnd("Dispose");
+			console.log("Disposed");
 
 			done();
-		}, 1000);
+		}, 5_000);
 
 		test("client state changes to open", (done) => {
 			const client = RpcPeer.FromOptions({
@@ -168,7 +170,7 @@ describe("Integration Tests", () => {
 				await client.request({ type: "score" }, 500);
 				expect(true).toBe(false); // Should not reach here
 			} catch (err: any) {
-				expect(err.message).toBe("Request Timed Out");
+				expect(err.message).toBe("Request timed out");
 			} finally {
 				await client.close();
 			}

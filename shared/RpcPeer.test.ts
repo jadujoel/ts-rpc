@@ -304,7 +304,7 @@ describe("RpcPeer", () => {
 		});
 
 		// Mock the retrySocket.send
-		const sendMock = mock(() => {});
+		const sendMock = mock(() => 0 as const);
 		peer.retrySocket.send = sendMock;
 
 		peer.send({ type: "test" });
@@ -323,7 +323,7 @@ describe("RpcPeer", () => {
 			responseSchema: z.any(),
 		});
 
-		peer.retrySocket.send = mock(() => {});
+		peer.retrySocket.send = mock(() => 0 as const);
 
 		const promise = peer.request({ type: "test" });
 		expect(promise).toBeInstanceOf(Promise);
@@ -336,7 +336,7 @@ describe("RpcPeer", () => {
 			responseSchema: z.any(),
 		});
 
-		peer.retrySocket.send = mock(() => {});
+		peer.retrySocket.send = mock(() => 0 as const);
 
 		const promise = peer.request({ type: "test" }, 100);
 
@@ -344,7 +344,7 @@ describe("RpcPeer", () => {
 			await promise;
 			expect(true).toBe(false); // Should not reach here
 		} catch (err: any) {
-			expect(err.message).toBe("Request Timed Out");
+			expect(err.message).toBe("Request timed out");
 		}
 	});
 
@@ -355,7 +355,7 @@ describe("RpcPeer", () => {
 			responseSchema: z.any(),
 		});
 
-		const sendMock = mock(() => {});
+		const sendMock = mock(() => 0 as const);
 		peer.retrySocket.send = sendMock;
 		peer.clientId = "responder-123";
 
@@ -384,7 +384,7 @@ describe("RpcPeer", () => {
 			responseSchema: z.any(),
 		});
 
-		peer.retrySocket.send = mock(() => {});
+		peer.retrySocket.send = mock(() => 0 as const);
 
 		peer.match((data, from) => {
 			expect(data.type).toBe("test");

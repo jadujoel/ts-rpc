@@ -189,6 +189,7 @@ export class RpcPeer<
 		InvalidResponseData: new Error("Invalid response data"),
 		RequestTimedOut: new Error("Request timed out"),
 		ConnectionClosed: new Error("Connection closed"),
+		CloseTimedOut: new Error("Close timed out"),
 	} as const;
 
 	public static ResponseEvent<const TRpcResponse extends RpcResponse>(
@@ -257,22 +258,49 @@ export class RpcPeer<
 		peer.retrySocket.addEventListener("message", (ev) =>
 			peer.handleMessage(ev as MessageEvent),
 		);
-		peer.retrySocket.addEventListener("open", (ev) => peer.dispatchEvent(ev));
-		peer.retrySocket.addEventListener("close", (ev) => peer.dispatchEvent(ev));
-		peer.retrySocket.addEventListener("error", (ev) => peer.dispatchEvent(ev));
+		// Forward events from RetrySocket to RpcPeer's EventTarget
+		// Note: We create new Event objects instead of reusing the same ones
+		// because events cannot be re-dispatched once they're being dispatched
+		peer.retrySocket.addEventListener("open", (ev) => {
+			peer.dispatchEvent(new Event(ev.type));
+		});
+		peer.retrySocket.addEventListener("close", (ev: Event): void => {
+			const actual = ev as CloseEvent;
+			peer.dispatchEvent(
+				new CloseEvent("close", {
+					code: actual.code,
+					reason: actual.reason,
+					wasClean: actual.wasClean,
+				}),
+			);
+		});
+		peer.retrySocket.addEventListener("error", (ev: Event) => {
+			peer.dispatchEvent(new Event(ev.type));
+		});
 		return peer;
 	}
 
 	public static Timeouts = {
-		Request: 10_000,
-		Close: 1_000,
-		Welcome: 10_000,
+		Request: 4_000,
+		Close: 4_000,
+		Welcome: 4_000,
 	} as const;
 
 	async dispose(): Promise<void> {
-		console.debug("[Peer] Disposing peer and closing socket");
+		console.time("[Peer] Dispose");
+		console.debug("[Peer] Dispose");
 		await this.close();
-		this.retrySocket.dispose();
+
+		await this.retrySocket.dispose();
+
+		// Reject all pending promises before closing
+		for (const item of this.pendingPromises.values()) {
+			global.clearTimeout(item.timer);
+			item.reject(RpcPeer.Errors.ConnectionClosed);
+		}
+		this.pendingPromises.clear();
+
+		console.time("[Peer] Dispose");
 	}
 
 	get state(): "closed" | "connecting" | "open" | "closing" {
@@ -316,24 +344,22 @@ export class RpcPeer<
 		reason = getCloseCodeDescription(code),
 		timeout = RpcPeer.Timeouts.Close,
 	): Promise<void> {
+		const timeId = `Peer Close ${this.clientId}`;
+		console.time(timeId);
 		console.debug(`[Peer] Closing: ${reason}`);
-		return new Promise((resolve) => {
+		return new Promise((resolve, reject) => {
 			if (this.state === "closed") {
 				console.debug("[Peer] Already closed");
+				console.timeEnd(timeId);
 				resolve();
 				return;
 			}
-			// Reject all pending promises before closing
-			for (const item of this.pendingPromises.values()) {
-				global.clearTimeout(item.timer);
-				item.reject(RpcPeer.Errors.ConnectionClosed);
-			}
-			this.pendingPromises.clear();
 
 			// If already closed, resolve immediately
-			if (this.retrySocket.readyState === 3) {
+			if (this.retrySocket.readyState === RetrySocket.CLOSED) {
 				// CLOSED
-				console.debug("[Peer] socket readystate closed");
+				console.debug("[Peer] Socket readystate closed");
+				console.timeEnd(timeId);
 				resolve();
 				return;
 			}
@@ -344,19 +370,21 @@ export class RpcPeer<
 			const closeHandler = () => {
 				console.debug(`[Peer] Socket closed, code: ${code}, reason: ${reason}`);
 				global.clearTimeout(closeTimeout);
-				this.retrySocket.removeEventListener("close", closeHandler);
+				this.removeEventListener("close", closeHandler);
+				console.timeEnd(timeId);
 				resolve();
 			};
 
-			this.retrySocket.addEventListener("close", closeHandler);
+			this.addEventListener("close", closeHandler);
 
 			// Set up timeout to prevent waiting forever
 			const closeTimeout = global.setTimeout(() => {
 				console.warn(
 					`[Peer] Close timed out after ${timeout}ms, forcing close`,
 				);
-				this.retrySocket.removeEventListener("close", closeHandler);
-				resolve();
+				this.removeEventListener("close", closeHandler);
+				console.timeEnd(timeId);
+				reject(RpcPeer.Errors.CloseTimedOut);
 			}, timeout);
 
 			// Close the socket - this sets isClosedByUser = true and clears listeners
@@ -435,7 +463,7 @@ export class RpcPeer<
 
 	request<TResponse = TResponseApi>(
 		data: TRequestApi,
-		timeout = RpcPeer.Timeouts.Request,
+		timeout: number = RpcPeer.Timeouts.Request,
 	): Promise<RpcResponse<TResponse>> {
 		const requestId = crypto.randomUUID();
 

@@ -65,6 +65,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		socket: null,
 	};
 
+	// Track which events are currently being dispatched to prevent re-entrancy
+	private dispatchingEvents = new Set<string>();
+
 	public static SendResult = {
 		Sent: 0,
 		Queued: 1,
@@ -129,11 +132,9 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		private messageQueue: MessageQueue = [],
 		private eventListeners: Map<
 			string,
-			Set<
-				readonly [
-					listener: EventListenerOrEventListenerObject,
-					options: boolean | AddEventListenerOptions | undefined,
-				]
+			Map<
+				EventListenerOrEventListenerObject,
+				boolean | AddEventListenerOptions | undefined
 			>
 		> = new Map(),
 		private isClosedByUser = false,
@@ -186,7 +187,13 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 				this.onclose.call(this.socket!, event);
 			}
 			this.scheduleReconnect();
-			this.dispatchEvent(new CloseEvent("close", event));
+			this.dispatchEvent(
+				new CloseEvent("close", {
+					code: event.code,
+					reason: event.reason,
+					wasClean: event.wasClean,
+				}),
+			);
 		};
 
 		this.socket.onerror = (event) => {
@@ -248,6 +255,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	public async dispose(): Promise<void> {
+		console.time("RetrySocket Dispose");
 		try {
 			await this.close();
 			this.socket = null;
@@ -260,6 +268,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		} catch (error) {
 			console.debug("Error disposing RetrySocket:", error);
 		}
+		console.timeEnd("RetrySocket Dispose");
 	}
 
 	public close(
@@ -268,36 +277,45 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		timeout = RetrySocket.Timeouts.Close,
 	): Promise<void> {
 		if (this.isClosedByUser) {
+			console.debug("[RS] Socket already closed by user");
 			return Promise.resolve();
 		}
 		return new Promise((resolve, reject) => {
 			this.isClosedByUser = true;
-			if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
+			if (!this.socket || this.socket.readyState === this.socket.CLOSED) {
+				console.debug("[RS] Socket already closed or not initialized");
 				resolve();
 				return;
 			}
 
-			const closeHandler = (): void => {
+			console.time("CloseHandler");
+
+			const closeHandler = (event: CloseEvent): void => {
+				console.timeEnd("CloseHandler");
+
+				console.debug("[RS] Close Handler");
 				global.clearTimeout(timeoutId);
 				this.socket?.removeEventListener("close", closeHandler);
+				this.dispatchEvent(event);
 				resolve();
 			};
 
 			const timeoutHandler = (): void => {
+				console.debug("[RS] Close Timeout Handler");
 				this.socket?.removeEventListener("close", closeHandler);
 				reject(RetrySocket.Errors.CloseTimeout);
 			};
 
 			const timeoutId = global.setTimeout(timeoutHandler, timeout);
 			this.socket.addEventListener("close", closeHandler, { once: true });
-
+			console.debug(`[RS] Close socket with state ${this.socket.readyState}`);
 			this.socket.close(code, reason);
 		});
 	}
 
 	public addEventListener(
 		type: RetrySocketEventName,
-		listener: EventListenerOrEventListenerObject,
+		listener: EventListener,
 		options?: boolean | AddEventListenerOptions,
 	): void {
 		console.debug(`[RS] Add event listener ${type}`);
@@ -306,49 +324,64 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 			return;
 		}
 		if (!this.eventListeners.has(type)) {
-			this.eventListeners.set(type, new Set());
+			this.eventListeners.set(type, new Map());
 		}
-		this.eventListeners.get(type)!.add([listener, options] as const);
+		this.eventListeners.get(type)!.set(listener, options);
 	}
 
 	public removeEventListener(
 		type: RetrySocketEventName | (string & {}),
 		listener: EventListenerOrEventListenerObject,
-		options?: boolean | EventListenerOptions,
+		_options?: boolean | EventListenerOptions,
 	): void {
-		if (this.isClosedByUser) {
-			console.debug(`[RS] Failed to remove listener (closed by user)`);
-			return;
-		}
-		if (this.eventListeners.has(type)) {
-			this.eventListeners.get(type)!.delete([listener, options] as const);
+		console.debug(`[RS] Remove event listener ${type}`);
+		const listeners = this.eventListeners.get(type);
+		if (listeners) {
+			listeners.delete(listener);
 		}
 	}
 
 	public dispatchEvent(event: CloseEvent | Event): boolean {
-		if (this.isClosedByUser) {
+		console.debug(`[RS] Dispatch Event ${event.type}`);
+
+		// Prevent re-entrant dispatch of the same event type
+		if (this.dispatchingEvents.has(event.type)) {
+			console.warn(
+				`[RS] Event "${event.type}" is already being dispatched, skipping`,
+			);
 			return false;
 		}
-		const listeners = this.eventListeners.get(event.type);
-		if (!listeners) {
+
+		const listenerMap = this.eventListeners.get(event.type);
+		if (!listenerMap) {
 			// Per EventTarget spec, return true if no listeners canceled it (assuming no cancelable logic implemented here properly yet)
 			return true;
 		}
-		let result = true;
-		for (const [listener, options] of listeners) {
-			if (typeof listener === "function") {
-				listener.call(this, event);
-			} else {
-				listener.handleEvent(event);
+
+		// Mark this event type as currently dispatching
+		this.dispatchingEvents.add(event.type);
+
+		try {
+			let result = true;
+			// Iterate over a copy to safely handle modifications during iteration
+			for (const [listener, options] of Array.from(listenerMap.entries())) {
+				if (typeof listener === "function") {
+					listener.call(this, event);
+				} else {
+					listener.handleEvent(event);
+				}
+				if (event.defaultPrevented) {
+					result = false;
+				}
+				if (typeof options === "object" && options.once) {
+					this.removeEventListener(event.type, listener);
+				}
 			}
-			if (event.defaultPrevented) {
-				result = false;
-			}
-			if (typeof options === "object" && options.once) {
-				this.removeEventListener(event.type, listener, options);
-			}
+			return result;
+		} finally {
+			// Always remove the dispatching flag, even if an error occurs
+			this.dispatchingEvents.delete(event.type);
 		}
-		return result;
 	}
 
 	// Getters for proxying properties if needed
