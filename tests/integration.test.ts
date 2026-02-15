@@ -37,8 +37,8 @@ describe("Integration Tests", () => {
 		server.stop(true);
 	});
 
-	describe.only("Client-Server Connection", () => {
-		test.only("client receives welcome message with clientId", async (done) => {
+	describe("Client-Server Connection", () => {
+		test("client receives welcome message with clientId", async () => {
 			const client = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
@@ -56,33 +56,28 @@ describe("Integration Tests", () => {
 			await client.dispose();
 			console.timeEnd("Dispose");
 			console.log("Disposed");
+		});
 
-			done();
-		}, 5_000);
-
-		test("client state changes to open", (done) => {
+		test("client state changes to open", async () => {
 			const client = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			client.addEventListener("open", () => {
-				(async () => {
-					try {
-						expect(client.state).toBe("open");
-						await client.close();
-						done();
-					} catch (error) {
-						done(error);
-					}
-				})();
+			await new Promise<void>((resolve) => {
+				client.addEventListener("open", () => {
+					resolve();
+				});
 			});
-		}, 5000);
+
+			expect(client.state).toBe("open");
+			await client.dispose();
+		});
 	});
 
 	describe("Request-Response Flow", () => {
-		test("service handles request and client receives response", (done) => {
+		test("service handles request and client receives response", async () => {
 			// Create service that responds to requests
 			const service = RpcPeer.FromOptions({
 				url: TEST_URL,
@@ -104,23 +99,19 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			// Wait for both to be ready
-			setTimeout(async () => {
-				const response = await client.request<
-					ResponseApiExample & { type: "score" }
-				>({ type: "score" }, 3000);
+			const response = await client.request<{ score: number; type: "score" }>(
+				{ type: "score" },
+				3000,
+			);
+			expect(response.category).toBe("response");
+			expect(response.data.type).toBe("score");
+			expect(response.data.score).toBe(42);
 
-				expect(response.category).toBe("response");
-				expect(response.data.type).toBe("score");
-				expect(response.data.score).toBe(42);
+			await service.dispose();
+			await client.dispose();
+		});
 
-				await service.close();
-				await client.close();
-				done();
-			}, 1000);
-		}, 10000);
-
-		test("request with greet returns greeting", (done) => {
+		test("request with greet returns greeting", async () => {
 			const service = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
@@ -140,19 +131,18 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			setTimeout(async () => {
-				const response = await client.request<
-					ResponseApiExample & { type: "greet" }
-				>({ type: "greet", name: "Alice" }, 3000);
+			await client.waitForWelcome();
 
-				expect(response.data.type).toBe("greet");
-				expect(response.data.greeting).toBe("Hello, Alice!");
+			const response = await client.request<
+				ResponseApiExample & { type: "greet" }
+			>({ type: "greet", name: "Alice" }, 3000);
 
-				await service.close();
-				await client.close();
-				done();
-			}, 1000);
-		}, 10000);
+			expect(response.data.type).toBe("greet");
+			expect(response.data.greeting).toBe("Hello, Alice!");
+
+			await service.dispose();
+			await client.dispose();
+		});
 	});
 
 	describe("Timeout Handling", () => {
@@ -163,8 +153,7 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			// Wait for connection
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await client.waitForWelcome();
 
 			try {
 				await client.request({ type: "score" }, 500);
@@ -172,9 +161,9 @@ describe("Integration Tests", () => {
 			} catch (err: any) {
 				expect(err.message).toBe("Request timed out");
 			} finally {
-				await client.close();
+				await client.dispose();
 			}
-		}, 5000);
+		});
 	});
 
 	describe("Multiple Clients", () => {
@@ -203,10 +192,10 @@ describe("Integration Tests", () => {
 			expect(client1.state).toBe("open");
 			expect(client2.state).toBe("open");
 			expect(client3.state).toBe("open");
-			await client1.close();
-			await client2.close();
-			await client3.close();
-		}, 5000);
+			await client1.dispose();
+			await client2.dispose();
+			await client3.dispose();
+		});
 
 		test("clients receive unique IDs", async () => {
 			const ids = new Set<string>();
@@ -227,12 +216,12 @@ describe("Integration Tests", () => {
 			ids.add(client2.clientId!);
 			ids.add(client3.clientId!);
 			expect(ids.size).toBe(3); // All IDs should be unique
-			await Promise.all([client1.close(), client2.close(), client3.close()]);
+			await Promise.all([client1.dispose(), client2.dispose(), client3.dispose()]);
 		});
 	});
 
 	describe("Error Handling", () => {
-		test("invalid request data is rejected by schema validation", (done) => {
+		test("invalid request data is rejected by schema validation", async () => {
 			// Suppress console.error for this test since we're intentionally sending invalid data
 			const originalConsoleError = console.error;
 			console.error = () => {};
@@ -249,27 +238,29 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
+			let receivedInvalidRequest = false;
+
 			// Service should not receive invalid requests
 			service.match(() => {
-				console.error = originalConsoleError;
-				done(new Error("Should not receive invalid request"));
+				receivedInvalidRequest = true;
 				return { type: "unknown" };
 			});
 
-			setTimeout(() => {
-				// Send invalid data (bypass type checking with any)
-				const invalidData = { type: "greet" } as any; // Missing 'name'
-				client.send(invalidData);
+			await client.waitForWelcome();
 
-				// Wait and verify service didn't crash
-				setTimeout(async () => {
-					await service.close();
-					await client.close();
-					console.error = originalConsoleError;
-					done();
-				}, 500);
-			}, 1000);
-		}, 5000);
+			// Send invalid data (bypass type checking with any)
+			const invalidData = { type: "greet" } as any; // Missing 'name'
+			client.send(invalidData);
+
+			// Wait and verify service didn't receive the invalid request
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
+			expect(receivedInvalidRequest).toBe(false);
+
+			await service.dispose();
+			await client.dispose();
+			console.error = originalConsoleError;
+		});
 	});
 
 	describe("Reconnection", () => {
@@ -280,21 +271,19 @@ describe("Integration Tests", () => {
 				responseSchema: ResponseApiSchemaExample,
 			});
 
-			// Wait for initial connection
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await client.waitForWelcome();
 			expect(client.state).toBe("open");
 
 			// Simulate disconnect (close and reopen works as reconnect simulation)
-			await client.close();
-			await new Promise((resolve) => setTimeout(resolve, 500));
+			await client.dispose();
 
 			// Note: RetrySocket should handle reconnection automatically
 			// if user didn't explicitly close it
-		}, 5000);
+		});
 	});
 
 	describe("Bidirectional Communication", () => {
-		test("two peers can send requests to each other", (done) => {
+		test("two peers can send requests to each other", async () => {
 			const peer1 = RpcPeer.FromOptions({
 				url: TEST_URL,
 				requestSchema: RequestApiSchemaExample,
@@ -321,19 +310,18 @@ describe("Integration Tests", () => {
 				return { type: "unknown" };
 			});
 
-			setTimeout(async () => {
-				// Peer2 requests from Peer1
-				const response1 = await peer2.request({ type: "game" }, 3000);
-				expect(response1.data.type).toBe("game");
+			await Promise.all([peer1.waitForWelcome(), peer2.waitForWelcome()]);
 
-				// Peer1 requests from Peer2
-				const response2 = await peer1.request({ type: "score" }, 3000);
-				expect(response2.data.type).toBe("score");
+			// Peer2 requests from Peer1
+			const response1 = await peer2.request({ type: "game" }, 3000);
+			expect(response1.data.type).toBe("game");
 
-				await peer1.close();
-				await peer2.close();
-				done();
-			}, 1000);
-		}, 10000);
+			// Peer1 requests from Peer2
+			const response2 = await peer1.request({ type: "score" }, 3000);
+			expect(response2.data.type).toBe("score");
+
+			await peer1.dispose();
+			await peer2.dispose();
+		});
 	});
 });

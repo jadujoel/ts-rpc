@@ -318,7 +318,6 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		listener: EventListener,
 		options?: boolean | AddEventListenerOptions,
 	): void {
-		console.debug(`[RS] Add event listener ${type}`);
 		if (this.isClosedByUser && type !== "close") {
 			console.debug(`[RS] Failed to add listener (closed by user)`);
 			return;

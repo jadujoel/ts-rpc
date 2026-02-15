@@ -461,13 +461,13 @@ export class RpcPeer<
 		this.retrySocket.send(JSON.stringify(message));
 	}
 
-	request<TResponse = TResponseApi>(
-		data: TRequestApi,
+	request<const TResponse = TResponseApi, const TRequest = TRequestApi>(
+		data: TRequest,
 		timeout: number = RpcPeer.Timeouts.Request,
 	): Promise<RpcResponse<TResponse>> {
 		const requestId = crypto.randomUUID();
 
-		const message: RpcRequest<TRequestApi> = {
+		const message: RpcRequest<TRequest> = {
 			category: "request",
 			requestId,
 			from: this.clientId,
