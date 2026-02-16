@@ -995,10 +995,10 @@ export class RpcPeer<
 	 */
 	match<
 		const THandler extends MatchHandler<
-			TRequestApi,
+			ExplicitAny,
 			TResponseApi,
 			string
-		> = MatchHandler<TRequestApi, TResponseApi, string>,
+		> = MatchHandler<ExplicitAny, TResponseApi, string>,
 	>(handler: THandler): void {
 		this.addEventListener("request", async (ev: Event) => {
 			const customEv = ev as CustomEvent<RpcRequest<TRequestApi>>;

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import type z from "zod";
+import type { MatchHandler } from "../../../lib.ts";
 import type { Message } from "../../shared/types.ts";
 import { useRpcPeer } from "../../shared/useRpcPeer.ts";
 import { ChatRequestSchema, ChatResponseSchema } from "../shared/schema.ts";
@@ -26,11 +28,14 @@ export function ChatApp() {
 
 	// Set up message listener
 	useEffect(() => {
-		if (!peer) return;
+		if (!peer) {
+			return;
+		}
 
-		peer.match((data) => {
+		type ChatResponse = z.infer<typeof ChatResponseSchema>;
+		const handler: MatchHandler<ChatResponse> = (data) => {
 			switch (data.type) {
-				case "message":
+				case "message": {
 					setMessages((prev) => [
 						...prev,
 						{
@@ -42,8 +47,8 @@ export function ChatApp() {
 						},
 					]);
 					break;
-
-				case "user-joined":
+				}
+				case "user-joined": {
 					setMessages((prev) => [
 						...prev,
 						{
@@ -61,8 +66,8 @@ export function ChatApp() {
 						}
 					});
 					break;
-
-				case "user-left":
+				}
+				case "user-left": {
 					setMessages((prev) => [
 						...prev,
 						{
@@ -80,11 +85,34 @@ export function ChatApp() {
 						}
 					});
 					break;
+				}
+				case "user-list": {
+					setUsers(data.users);
+					break;
+				}
+				case "error": {
+					setMessages((prev) => [
+						...prev,
+						{
+							id: crypto.randomUUID(),
+							from: "system",
+							fromName: "System",
+							content: `Error: ${data.message}`,
+							timestamp: Date.now(),
+						},
+					]);
+					break;
+				}
+				default:
+					console.warn("Unknown response type:", data);
+					break;
 			}
 
 			// Return null to indicate no response needed
 			return null;
-		});
+		};
+
+		peer.match(handler);
 	}, [peer]);
 
 	const handleJoin = async () => {

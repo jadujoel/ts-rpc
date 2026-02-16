@@ -2,16 +2,16 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: test file */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
-import { serve } from "../examples/serve";
-import { RpcPeer } from "../shared/RpcPeer";
 import {
 	RequestApiSchemaExample,
 	type ResponseApiExample,
 	ResponseApiSchemaExample,
-} from "../shared/SchemaExample";
+} from "../examples/SchemaExample.ts";
+import { serve, type WebSocketData } from "../examples/serve";
+import { RpcPeer } from "../shared/RpcPeer.ts";
 
 describe("Integration Tests", () => {
-	let server: Server;
+	let server: Server<WebSocketData>;
 	const TEST_PORT = 8765;
 	const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 

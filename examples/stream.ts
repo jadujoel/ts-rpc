@@ -32,6 +32,7 @@
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import { RpcPeer } from "../shared/RpcPeer.ts";
+import type { WebSocketData } from "./serve.ts";
 
 // Define schemas using discriminated unions for type safety
 const RequestSchema = z.discriminatedUnion("method", [
@@ -213,7 +214,7 @@ async function sendLogStream(
  * Server-side: Handle stream requests and send streams
  */
 async function runServer() {
-	const server = Bun.serve({
+	const server = Bun.serve<WebSocketData>({
 		port: 3000,
 		fetch(req, server) {
 			const url = new URL(req.url);

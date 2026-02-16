@@ -116,7 +116,7 @@ export function useRpcPeer<
 		}
 	};
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
+	// biome-ignore lint/correctness/useExhaustiveDependencies: including it causes error
 	useEffect(() => {
 		if (autoConnect) {
 			connect();

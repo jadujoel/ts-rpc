@@ -42,7 +42,8 @@ const BANNED_STRINGS = [".."] as const;
  * Internal metadata attached to each WebSocket connection.
  * Contains connection details, authentication context, and session information.
  * @internal
- */ interface WebSocketData {
+ */
+export interface WebSocketData {
 	readonly url: string;
 	readonly host: string;
 	readonly origin: string;
@@ -129,7 +130,7 @@ export function serve({
 	enableRateLimit = true,
 	maxMessageSize = 1024 * 1024, // 1MB default
 	enableSessionPersistence = true,
-}: ServeOptions = {}): Server {
+}: ServeOptions = {}): Server<WebSocketData> {
 	Logger = logger;
 
 	debug("Server Options", {
@@ -469,7 +470,7 @@ function getWebSocketData(
  */
 async function getResponse(
 	request: Request,
-	server: Server,
+	server: Server<WebSocketData>,
 ): Promise<Response> {
 	switch (request.method) {
 		case "GET": {
