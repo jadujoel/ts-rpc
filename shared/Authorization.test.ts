@@ -96,19 +96,17 @@ describe("StrictAuthorizationRules", () => {
 		});
 
 		test("creates with admins set", () => {
-			const admins = new Set(["admin-1", "admin-2"]);
-			const rules = new StrictAuthorizationRules(admins);
+			const rules = StrictAuthorizationRules.FromAdmins(["admin-1", "admin-2"]);
 			expect(rules.canSubscribeToTopic("admin-1", "topic-1")).toBe(true);
 			expect(rules.canSubscribeToTopic("user-1", "topic-1")).toBe(false);
 		});
 
 		test("creates with topic permissions", () => {
-			const topicPermissions = new Map([
-				["topic-1", new Set(["user-1", "user-2"])],
-				["topic-2", new Set(["user-3"])],
-			]);
 			const rules = StrictAuthorizationRules.FromOptions({
-				topicPermissions: topicPermissions,
+				topicPermissions: {
+					"topic-1": ["user-1", "user-2"],
+					"topic-2": ["user-3"],
+				},
 			});
 			expect(rules.canSubscribeToTopic("user-1", "topic-1")).toBe(true);
 			expect(rules.canSubscribeToTopic("user-3", "topic-2")).toBe(true);
@@ -127,7 +125,7 @@ describe("StrictAuthorizationRules", () => {
 
 		test("creates from options with Set of admins", () => {
 			const rules = StrictAuthorizationRules.FromOptions({
-				adminUsers: new Set(["admin-1", "admin-2"]),
+				adminUsers: ["admin-1", "admin-2"],
 			});
 			expect(rules.canSubscribeToTopic("admin-2", "any-topic")).toBe(true);
 			expect(rules.getRateLimit("admin-2")).toBe(1000);
@@ -136,7 +134,9 @@ describe("StrictAuthorizationRules", () => {
 		test("creates from options with topic permissions", () => {
 			const rules = StrictAuthorizationRules.FromOptions({
 				adminUsers: ["admin-1"],
-				topicPermissions: new Map([["private-topic", new Set(["user-1"])]]),
+				topicPermissions: {
+					"private-topic": ["user-1"],
+				},
 			});
 			expect(rules.canSubscribeToTopic("admin-1", "private-topic")).toBe(true);
 			expect(rules.canSubscribeToTopic("user-1", "private-topic")).toBe(true);
@@ -164,13 +164,13 @@ describe("StrictAuthorizationRules", () => {
 	});
 
 	describe("canSubscribeToTopic", () => {
-		const rules = new StrictAuthorizationRules(
-			new Set(["admin-1"]),
-			new Map([
-				["public", new Set(["user-1", "user-2"])],
-				["private", new Set(["user-1"])],
-			]),
-		);
+    const rules = StrictAuthorizationRules.FromOptions({
+      adminUsers: ["admin-1"],
+      topicPermissions: {
+        public: ["user-1", "user-2"],
+        private: ["user-1"],
+      },
+    });
 
 		test("denies unauthenticated users", () => {
 			expect(rules.canSubscribeToTopic(undefined, "public")).toBe(false);
@@ -226,10 +226,12 @@ describe("StrictAuthorizationRules", () => {
 	});
 
 	describe("getRateLimit", () => {
-		const rules = new StrictAuthorizationRules(
-			new Set(["admin-1"]),
-			new Map([["topic-1", new Set(["user-1"])]]),
-		);
+		const rules = StrictAuthorizationRules.FromOptions({
+			adminUsers: ["admin-1"],
+			topicPermissions: {
+				"topic-1": ["user-1"],
+			},
+		});
 
 		test("returns 10 for unauthenticated users", () => {
 			expect(rules.getRateLimit(undefined)).toBe(10);

@@ -130,8 +130,31 @@ export interface StrictAuthorizationRulesOptions<
 	TUserId extends string = string,
 	TTopic extends string = string,
 > {
-	readonly adminUsers?: readonly TUserId[] | Set<TUserId>;
-	readonly topicPermissions?: Map<TTopic, Set<TUserId>>;
+	readonly adminUsers?: readonly TUserId[];
+	readonly topicPermissions?: TopicPermissionsRecord<TUserId, TTopic>;
+}
+
+export type TopicPermissionsMap<
+	TUserId extends string,
+	TTopic extends string,
+> = Map<TTopic, Set<TUserId>>;
+
+export type TopicPermissionsRecord<
+	TUserId extends string,
+	TTopic extends string,
+> = Record<TTopic, readonly TUserId[]>;
+
+export function convertTopicPermissionsRecordToMap<
+	TUserId extends string,
+	TTopic extends string,
+>(
+	record: TopicPermissionsRecord<TUserId, TTopic>,
+): TopicPermissionsMap<TUserId, TTopic> {
+	const map: TopicPermissionsMap<TUserId, TTopic> = new Map();
+	for (const [topic, users] of Object.entries<readonly TUserId[]>(record)) {
+		map.set(topic as TTopic, new Set(users));
+	}
+	return map;
 }
 
 /**
@@ -181,13 +204,13 @@ export class StrictAuthorizationRules<
 		const TTopic extends string = string,
 		const TToClientId extends string = string,
 	>(
-		options: StrictAuthorizationRulesOptions<TUserId, TTopic>,
+		options?: StrictAuthorizationRulesOptions<TUserId, TTopic>,
 	): StrictAuthorizationRules<TUserId, TTopic, TToClientId> {
-		const admins =
-			options.adminUsers instanceof Set
-				? options.adminUsers
-				: new Set(options.adminUsers);
-		const topicPermissions = options.topicPermissions || new Map();
+		const admins = new Set(options?.adminUsers);
+		const topicPermissions = convertTopicPermissionsRecordToMap(
+			options?.topicPermissions ??
+				({} as TopicPermissionsRecord<TUserId, TTopic>),
+		);
 		return new StrictAuthorizationRules(admins, topicPermissions);
 	}
 
@@ -199,13 +222,18 @@ export class StrictAuthorizationRules<
 		adminUsers: readonly TUserId[],
 	): StrictAuthorizationRules<TUserId, TTopic, TToClientId> {
 		return StrictAuthorizationRules.FromOptions({
-			adminUsers: new Set(adminUsers),
+			adminUsers: adminUsers,
+			topicPermissions: {},
 		});
+	}
+
+	static Default() {
+		return new StrictAuthorizationRules();
 	}
 
 	canSubscribeToTopic(
 		userId: TUserId | undefined | (string & {}),
-		topic: TTopic,
+		topic: TTopic | (string & {}),
 	): boolean {
 		if (!userId) {
 			return false;
@@ -214,11 +242,17 @@ export class StrictAuthorizationRules<
 			return true;
 		}
 
-		const allowedUsers = this.topicPermissions.get(topic);
-		return allowedUsers ? allowedUsers.has(userId as TUserId) : false;
+		const allowedUsers = this.topicPermissions.get(topic as TTopic);
+		if (allowedUsers === undefined) {
+			return false;
+		}
+		return allowedUsers.has(userId as TUserId);
 	}
 
-	canPublishToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
+	canPublishToTopic(
+		userId: TUserId | undefined | (string & {}),
+		topic: TTopic | (string & {}),
+	): boolean {
 		return this.canSubscribeToTopic(userId, topic);
 	}
 
@@ -230,13 +264,13 @@ export class StrictAuthorizationRules<
 		return fromUserId !== undefined;
 	}
 
-	getRateLimit(userId: TUserId | undefined): number {
+	getRateLimit(userId: TUserId | (string & {}) | undefined): number {
 		// Unauthenticated: 10 msg/s
-		if (!userId) {
+		if (userId === undefined) {
 			return StrictAuthorizationRules.RateLimits.Unauthenticated;
 		}
 		// Admins: 1000 msg/s
-		if (this.admins.has(userId)) {
+		if (this.admins.has(userId as TUserId)) {
 			return StrictAuthorizationRules.RateLimits.Admin;
 		}
 		return StrictAuthorizationRules.RateLimits.User;

@@ -49,11 +49,10 @@ const validator = SimpleAuthValidator.FromTokens({
 // - Topic permissions control who can subscribe and publish
 const rules = StrictAuthorizationRules.FromOptions({
 	adminUsers: ["admin"], // These users have elevated privileges
-	topicPermissions: new Map([
-		// Each topic has a set of user IDs that can access it
-		["chat", new Set(["user1", "user2", "admin"])], // Public chat room
-		["admin-only", new Set(["admin"])], // Admin-only topic - regular users denied
-	]),
+	topicPermissions: {
+		chat: ["user1", "user2", "admin"], // All users can access 'chat' topic
+		"admin-only": ["admin"], // Only admin can access 'admin-only' topic
+	},
 });
 
 // STEP 3: Start server with authentication and authorization
