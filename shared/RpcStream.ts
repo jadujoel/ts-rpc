@@ -290,7 +290,7 @@ export class StreamManager {
 				if (ws.bufferedAmount !== undefined) {
 					while (ws.bufferedAmount > this.maxBufferedAmount) {
 						await new Promise((resolve) =>
-							global.setTimeout(resolve, this.backpressureDelay),
+							globalThis.setTimeout(resolve, this.backpressureDelay),
 						);
 						// Check for abort during backpressure wait
 						if (abortController.signal.aborted) {
@@ -339,7 +339,7 @@ export class StreamManager {
 				const pending = this.pendingStreams.get(id);
 				if (pending) {
 					// Clear timeout and remove from pending immediately
-					global.clearTimeout(pending.timeoutHandle);
+					globalThis.clearTimeout(pending.timeoutHandle);
 					this.pendingStreams.delete(id);
 
 					// Flush all buffered messages to the controller
@@ -365,13 +365,13 @@ export class StreamManager {
 					// After enqueueing all data, handle close/error
 					// Use queueMicrotask to ensure this happens after start callback completes
 					if (errorMessage !== undefined) {
-						global.queueMicrotask(() => {
+						globalThis.queueMicrotask(() => {
 							controller.error(new Error(errorMessage));
 						});
 						return; // Don't register the stream
 					}
 					if (shouldClose) {
-						global.queueMicrotask(() => {
+						globalThis.queueMicrotask(() => {
 							controller.close();
 						});
 						return; // Don't register the stream
@@ -413,7 +413,7 @@ export class StreamManager {
 
 			if (!pending) {
 				// Create new pending buffer with timeout
-				const timeoutHandle = global.setTimeout(() => {
+				const timeoutHandle = globalThis.setTimeout(() => {
 					const p = this.pendingStreams.get(message.streamId);
 					if (p) {
 						console.warn(
@@ -548,7 +548,7 @@ export class StreamManager {
 
 		// Clear all pending stream buffers and their timeouts
 		for (const pending of this.pendingStreams.values()) {
-			global.clearTimeout(pending.timeoutHandle);
+			globalThis.clearTimeout(pending.timeoutHandle);
 		}
 		this.pendingStreams.clear();
 	}

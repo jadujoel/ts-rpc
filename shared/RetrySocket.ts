@@ -315,7 +315,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		console.debug(
 			`Reconnecting in ${delay}ms... (Attempt ${this.reconnectAttempts})`,
 		);
-		global.setTimeout(() => this.connect(), delay);
+		globalThis.setTimeout(() => this.connect(), delay);
 	}
 
 	/**
@@ -439,7 +439,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 				console.timeEnd("CloseHandler");
 
 				console.debug("[RS] Close Handler");
-				global.clearTimeout(timeoutId);
+				globalThis.clearTimeout(timeoutId);
 				this.socket?.removeEventListener("close", closeHandler);
 				this.dispatchEvent(event);
 				resolve();
@@ -451,7 +451,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 				reject(RetrySocket.Errors.CloseTimeout);
 			};
 
-			const timeoutId = global.setTimeout(timeoutHandler, timeout);
+			const timeoutId = globalThis.setTimeout(timeoutHandler, timeout);
 			this.socket.addEventListener("close", closeHandler, { once: true });
 			console.debug(`[RS] Close socket with state ${this.socket.readyState}`);
 			this.socket.close(code, reason);

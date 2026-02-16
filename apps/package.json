@@ -1,0 +1,22 @@
+{
+	"name": "ts-signal-rpc-demos",
+	"version": "1.0.0",
+	"type": "module",
+	"private": true,
+	"description": "Demo applications showcasing ts-signal-rpc features",
+	"scripts": {
+		"dev:chat": "cd chat && bun run dev",
+		"dev:auth": "cd auth && bun run dev",
+		"dev:p2p": "cd p2p && bun run dev",
+		"dev:all": "bun run dev:chat & bun run dev:auth & bun run dev:p2p",
+		"install:all": "cd chat && bun install && cd ../auth && bun install && cd ../p2p && bun install",
+		"build:all": "cd chat && bun run build && cd ../auth && bun run build && cd ../p2p && bun run build"
+	},
+	"workspaces": [
+		"chat",
+		"shared"
+	],
+	"dependencies": {
+		"react": "19.2.4"
+	}
+}

@@ -1,7 +1,7 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: test file */
 /** biome-ignore-all lint/style/noNonNullAssertion: test file */
 /** biome-ignore-all lint/complexity/noBannedTypes: test file */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, it, mock, test } from "bun:test";
 import { z } from "zod";
 import { RpcMessageSchema, RpcPeer } from "./RpcPeer.ts";
 
@@ -245,7 +245,7 @@ describe("RpcPeer", () => {
 		expect(peer.clientId).toBe("test-client-123");
 	});
 
-	test("handleMessage dispatches request event", (done) => {
+	it("handleMessage dispatches request event", (done) => {
 		const peer = RpcPeer.FromOptions({
 			url: "ws://localhost:8080",
 			requestSchema: z.any(),

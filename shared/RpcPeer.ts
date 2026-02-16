@@ -263,7 +263,7 @@ export type MatchHandler<
 ) => Promise<TResponseApi | undefined> | TResponseApi | undefined;
 
 /** Type alias for the global setTimeout function. */
-export type SetTimeout = typeof global.setTimeout;
+export type SetTimeout = typeof globalThis.setTimeout;
 /** Return type of setTimeout. */
 export type SetTimeoutReturn = ReturnType<SetTimeout>;
 
@@ -570,7 +570,7 @@ export class RpcPeer<
 
 		// Reject all pending promises before closing
 		for (const item of this.pendingPromises.values()) {
-			global.clearTimeout(item.timer);
+			globalThis.clearTimeout(item.timer);
 			item.reject(RpcPeer.Errors.ConnectionClosed);
 		}
 		this.pendingPromises.clear();
@@ -584,7 +584,7 @@ export class RpcPeer<
 	 */
 	private startHeartbeat(): void {
 		this.stopHeartbeat();
-		this.heartbeatTimer = global.setInterval(() => {
+		this.heartbeatTimer = globalThis.setInterval(() => {
 			if (this.retrySocket.readyState === WebSocket.OPEN) {
 				this.retrySocket.send(
 					JSON.stringify({
@@ -602,7 +602,7 @@ export class RpcPeer<
 	 */
 	private stopHeartbeat(): void {
 		if (this.heartbeatTimer) {
-			global.clearInterval(this.heartbeatTimer);
+			globalThis.clearInterval(this.heartbeatTimer);
 			this.heartbeatTimer = null;
 		}
 	}
@@ -652,11 +652,11 @@ export class RpcPeer<
 					return;
 				}
 				this.removeEventListener("welcome", welcomeHandler as EventListener);
-				global.clearTimeout(timer);
+				globalThis.clearTimeout(timer);
 				resolve(ev.detail.clientId);
 			};
 
-			const timer = global.setTimeout(() => {
+			const timer = globalThis.setTimeout(() => {
 				this.removeEventListener("welcome", welcomeHandler as EventListener);
 				reject(RpcPeer.Errors.RequestTimedOut);
 			}, timeout);
@@ -712,7 +712,7 @@ export class RpcPeer<
 			// which would prevent addEventListener from working
 			const closeHandler = () => {
 				console.debug(`[Peer] Socket closed, code: ${code}, reason: ${reason}`);
-				global.clearTimeout(closeTimeout);
+				globalThis.clearTimeout(closeTimeout);
 				this.removeEventListener("close", closeHandler);
 				console.timeEnd(timeId);
 				resolve();
@@ -721,7 +721,7 @@ export class RpcPeer<
 			this.addEventListener("close", closeHandler);
 
 			// Set up timeout to prevent waiting forever
-			const closeTimeout = global.setTimeout(() => {
+			const closeTimeout = globalThis.setTimeout(() => {
 				console.warn(
 					`[Peer] Close timed out after ${timeout}ms, forcing close`,
 				);
@@ -824,14 +824,14 @@ export class RpcPeer<
 								`[Peer] Invalid response data: ${valid.error.message}`,
 							);
 							pending.reject(RpcPeer.Errors.InvalidResponseData);
-							global.clearTimeout(pending.timer);
+							globalThis.clearTimeout(pending.timer);
 							this.pendingPromises.delete(message.requestId);
 							return false;
 						}
 					}
 
 					pending.resolve(message);
-					global.clearTimeout(pending.timer);
+					globalThis.clearTimeout(pending.timer);
 					this.pendingPromises.delete(message.requestId);
 				}
 			}
@@ -914,7 +914,7 @@ export class RpcPeer<
 		const { promise, resolve, reject } =
 			Promise.withResolvers<RpcResponse<TResponse>>();
 
-		const timer = global.setTimeout(() => {
+		const timer = globalThis.setTimeout(() => {
 			if (this.pendingPromises.has(requestId)) {
 				this.pendingPromises.delete(requestId);
 				reject(RpcPeer.Errors.RequestTimedOut);
@@ -926,7 +926,7 @@ export class RpcPeer<
 		try {
 			this.retrySocket.send(JSON.stringify(message));
 		} catch (err) {
-			global.clearTimeout(timer);
+			globalThis.clearTimeout(timer);
 			this.pendingPromises.delete(requestId);
 			reject(err);
 		}
