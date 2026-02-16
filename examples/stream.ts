@@ -3,10 +3,30 @@
  *
  * This example shows:
  * 1. Sending an AsyncIterable stream from server to client
- * 2. Handling backpressure automatically
- * 3. Multiplexing multiple streams over one WebSocket
- * 4. Proper cleanup on connection close
+ * 2. Handling backpressure automatically (pauses when buffer is full)
+ * 3. Multiplexing multiple streams over one WebSocket connection
+ * 4. Proper cleanup on connection close or early abort
  * 5. Type-safe request/response handling with discriminated unions
+ * 6. Reading streams using ReadableStream API
+ *
+ * STREAMING LIFECYCLE:
+ * - Client requests a stream via RPC
+ * - Server responds with streamId
+ * - Server sends StreamData messages with payload chunks
+ * - Client receives data via ReadableStream
+ * - Stream ends with StreamEnd or StreamError message
+ * - Either party can abort at any time
+ *
+ * BACKPRESSURE HANDLING:
+ * - StreamManager monitors WebSocket bufferedAmount
+ * - When buffer exceeds threshold (default: 1MB), sending pauses
+ * - Prevents memory overflow when network is slower than data generation
+ * - Automatically resumes when buffer drains
+ *
+ * ERROR HANDLING:
+ * - Errors in generator propagate as StreamError messages
+ * - Connection loss aborts all active streams
+ * - Clients can abort streams early with closeReceivingStream()
  */
 
 import type { ServerWebSocket } from "bun";
@@ -48,15 +68,21 @@ const ResponseSchema = z.discriminatedUnion("type", [
 export type StreamRequest = z.infer<typeof RequestSchema>;
 export type StreamResponse = z.infer<typeof ResponseSchema>;
 
-// Example 1: Streaming numbers
+// STREAM GENERATORS
+// These async generators demonstrate different types of data streams
+// AsyncIterables are the key to streaming - they produce values over time
+
+// Example 1: Streaming numbers (demonstrates simple incremental data)
+// Use case: Progress updates, counters, pagination
 async function* numberStream(start: number, end: number, delay = 100) {
 	for (let i = start; i <= end; i++) {
 		await new Promise((resolve) => setTimeout(resolve, delay));
-		yield i;
+		yield i; // Each yield sends one chunk to the stream
 	}
 }
 
-// Example 2: Streaming data from a simulated data source
+// Example 2: Streaming structured data (demonstrates complex objects)
+// Use case: Database query results, API responses, real-time updates
 async function* dataFeed() {
 	const data = [
 		{ id: 1, message: "First update" },
@@ -72,7 +98,8 @@ async function* dataFeed() {
 	}
 }
 
-// Example 3: Streaming log entries
+// Example 3: Streaming log entries (demonstrates continuous monitoring)
+// Use case: Server logs, application telemetry, real-time monitoring
 async function* logStream() {
 	const logLevels = ["info", "warn", "error", "debug"];
 	for (let i = 0; i < 20; i++) {
@@ -418,9 +445,14 @@ async function runClient() {
 			console.log(`[Client] ${log.level.toUpperCase()}: ${log.message}`);
 			count++;
 
-			// Demonstrate aborting a stream early
+			// EARLY ABORT DEMONSTRATION
+			// Streams can be closed before completion
+			// Useful for: canceling slow operations, limiting results, handling user cancellation
+			// closeReceivingStream() cleanly shuts down the stream on the client side
 			if (count === 10) {
-				console.log("[Client] Aborting stream early...");
+				console.log(
+					"[Client] Aborting stream early (simulating user cancellation)...",
+				);
 				peer.closeReceivingStream(logStreamId);
 				break;
 			}

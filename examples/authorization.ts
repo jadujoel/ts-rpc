@@ -3,6 +3,25 @@
  *
  * This example demonstrates how to set up and use the authentication
  * and authorization features of ts-signal-rpc.
+ *
+ * Key concepts covered:
+ * - Token-based authentication (SimpleAuthValidator)
+ * - Topic-based access control (StrictAuthorizationRules)
+ * - Session persistence and restoration after reconnection
+ * - Rate limiting per user
+ * - Heartbeat monitoring for connection health
+ *
+ * Authentication flow:
+ * 1. Client provides token in URL query parameter or Authorization header
+ * 2. Server validates token before upgrading to WebSocket
+ * 3. Server checks if user can subscribe to the requested topic
+ * 4. If all checks pass, connection is established and client receives welcome message
+ *
+ * Authorization checks:
+ * - canSubscribeToTopic: Checked during WebSocket upgrade
+ * - canPublishToTopic: Checked when client sends messages to topic
+ * - canMessagePeer: Checked when client sends direct messages to peers
+ * - Rate limits enforced per user (different limits for admin vs regular users)
  */
 
 import { z } from "zod";
@@ -15,23 +34,34 @@ import { RpcPeer } from "../shared/RpcPeer.ts";
 
 console.debug = () => {};
 
-// 1. Set up authentication validator with some test tokens
+// STEP 1: Set up authentication validator with test tokens
+// In production, you'd read these from a database or external auth service
+// SimpleAuthValidator provides basic token-based authentication
 const validator = SimpleAuthValidator.FromTokens({
 	"user1-secret-token": "user1",
 	"user2-secret-token": "user2",
 	"admin-secret-token": "admin",
 });
 
-// 2. Set up authorization rules
+// STEP 2: Set up authorization rules
+// StrictAuthorizationRules provides role-based access control
+// - Admin users get higher rate limits (1000 msg/s vs 50 msg/s)
+// - Topic permissions control who can subscribe and publish
 const rules = StrictAuthorizationRules.FromOptions({
-	adminUsers: ["admin"], // admin users
+	adminUsers: ["admin"], // These users have elevated privileges
 	topicPermissions: new Map([
-		["chat", new Set(["user1", "user2", "admin"])], // chat topic accessible to these users
-		["admin-only", new Set(["admin"])], // admin-only topic
+		// Each topic has a set of user IDs that can access it
+		["chat", new Set(["user1", "user2", "admin"])], // Public chat room
+		["admin-only", new Set(["admin"])], // Admin-only topic - regular users denied
 	]),
 });
 
-// 3. Start server with authentication and authorization
+// STEP 3: Start server with authentication and authorization
+// The server will:
+// - Validate tokens before allowing WebSocket upgrade
+// - Check topic permissions during subscription
+// - Enforce rate limits per user
+// - Track sessions for reconnection
 const server = serve({
 	hostname: "127.0.0.1",
 	port: 0,
@@ -99,15 +129,20 @@ async function exampleClient() {
 		`Client1 connected! name ${client1.name} ${client1.sessionId} ClientId: ${client1.clientId}, SessionId: ${client1.sessionId}`,
 	);
 
-	// Create second client (simulating reconnection with session persistence)
-	const sessionId = client1.sessionId; // Save session ID
-	const clientId = client1.clientId; // Save client ID
+	// SESSION PERSISTENCE DEMONSTRATION
+	// The server tracks sessions and can restore a client's identity after reconnection
+	// This is useful for:
+	// - Maintaining peer-to-peer connections across network interruptions
+	// - Preserving message routing when clients temporarily disconnect
+	// - Continuing conversations without re-establishing peer relationships
+	const sessionId = client1.sessionId; // Save session ID (assigned by server)
+	const clientId = client1.clientId; // Save client ID (unique identifier)
 
 	console.log(
 		`\nSimulating reconnection with session: ${sessionId}, clientId: ${clientId}`,
 	);
 
-	// Close first connection
+	// Disconnect first connection
 	await client1.close();
 
 	// Wait a bit
@@ -186,7 +221,13 @@ async function exampleClient() {
 	);
 	console.log("Received response:", response.data);
 
-	// Test rate limiting by sending many requests rapidly
+	// RATE LIMITING DEMONSTRATION
+	// The server uses a token bucket algorithm to limit message rates:
+	// - Regular users (user2): 50 messages/second
+	// - Admin users: 1000 messages/second
+	// - Unauthenticated: 10 messages/second
+	// When limit exceeded, the server sends an error response and the request fails
+	// This prevents abuse and ensures fair resource allocation
 	console.log(
 		"\nTesting rate limiting (sending 60 requests simultaneously)...",
 	);

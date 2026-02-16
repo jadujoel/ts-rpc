@@ -1,10 +1,18 @@
 import { z } from "zod";
 
 /**
- * Stream message types for different stream lifecycle events
+ * Stream message types for different stream lifecycle events.
+ * - StreamData: Contains payload data
+ * - StreamEnd: Indicates stream completed successfully
+ * - StreamError: Indicates stream encountered an error
  */
 export type StreamMessageType = "StreamData" | "StreamEnd" | "StreamError";
 
+/**
+ * Error message sent when a stream encounters an error.
+ * @template TStreamId - The stream identifier type
+ * @template TError - The error message type
+ */
 export interface StreamErrorMessage<
 	TStreamId extends string = string,
 	TError extends string = string,
@@ -14,6 +22,11 @@ export interface StreamErrorMessage<
 	readonly error: TError;
 }
 
+/**
+ * Data message containing a payload chunk from the stream.
+ * @template TStreamId - The stream identifier type
+ * @template TPayload - The payload data type
+ */
 export interface StreamDataMessage<
 	TStreamId extends string = string,
 	TPayload = unknown,
@@ -23,11 +36,18 @@ export interface StreamDataMessage<
 	readonly payload: TPayload;
 }
 
+/**
+ * End message indicating the stream has completed successfully.
+ * @template TStreamId - The stream identifier type
+ */
 export interface StreamEndMessage<TStreamId extends string = string> {
 	readonly type: "StreamEnd";
 	readonly streamId: TStreamId;
 }
 
+/**
+ * Type representing a valid UUID v4 string format.
+ */
 export type RandomUUID = `${string}-${string}-${string}-${string}-${string}`;
 
 /**
@@ -103,10 +123,14 @@ export interface ReceivingStreamState<TStream = unknown> {
 }
 
 /**
- * For example WebSocket
+ * Interface for WebSocket-like objects that can send data and track buffer amount.
+ * Used for abstraction to allow testing and custom transport implementations.
+ * @template TData - The data type that can be sent (typically string)
  */
 export interface Sendable<TData = string> {
+	/** Function to send data over the transport. */
 	readonly send: (data: TData) => void;
+	/** Number of bytes queued but not yet sent. Used for backpressure. */
 	readonly bufferedAmount?: number;
 }
 
@@ -196,12 +220,26 @@ export class StreamManager {
 	}
 
 	/**
-	 * Sends an AsyncIterable as a stream over the WebSocket
+	 * Sends an AsyncIterable as a stream over the WebSocket.
+	 * Handles backpressure automatically by monitoring buffer size and pausing when needed.
+	 *
 	 * @template TValue - The type of items in the iterable
-	 * @param ws - WebSocket to send data through
+	 * @param ws - WebSocket-like object to send data through
 	 * @param iterable - AsyncIterable to stream
-	 * @param streamId - Optional custom stream ID
-	 * @returns Promise that resolves when stream completes
+	 * @param streamId - Optional custom stream ID (auto-generated if not provided)
+	 * @returns Promise that resolves with the stream ID when stream completes
+	 * @throws {Error} If stream is aborted or message sending fails
+	 *
+	 * @example
+	 * ```typescript
+	 * async function* generateData() {
+	 *   for (let i = 0; i < 100; i++) {
+	 *     yield { count: i };
+	 *   }
+	 * }
+	 *
+	 * const streamId = await manager.sendStream(ws, generateData());
+	 * ```
 	 */
 	async sendStream<
 		const TValue = unknown,
@@ -230,17 +268,19 @@ export class StreamManager {
 
 		try {
 			while (true) {
-				// Check if stream was aborted
+				// Check if stream was aborted by user or error
 				if (abortController.signal.aborted) {
 					throw new Error(StreamManager.ErrorMessages.StreamAborted);
 				}
 
-				// Apply backpressure if needed
+				// BACKPRESSURE: Wait for buffer to drain if it's too full
+				// This prevents memory issues when sending data faster than network can transmit
 				if (ws.bufferedAmount !== undefined) {
 					while (ws.bufferedAmount > this.maxBufferedAmount) {
 						await new Promise((resolve) =>
 							global.setTimeout(resolve, this.backpressureDelay),
 						);
+						// Check for abort during backpressure wait
 						if (abortController.signal.aborted) {
 							throw new Error(
 								StreamManager.ErrorMessages.StreamAbortedDuringBackpressure,

@@ -11,27 +11,38 @@ import {
 } from "./shared/Authorization.ts";
 import home from "./src/index.html";
 
+/**
+ * Configuration options for the RPC WebSocket server.
+ */
 export interface ServeOptions {
+	/** Hostname to bind the server to. Default: "localhost" */
 	readonly hostname?: string;
+	/** Port to listen on. Default: 3000 */
 	readonly port?: number;
+	/** Enable development mode with additional logging. Default: false */
 	readonly development?: boolean;
+	/** Enable hot module reloading (Bun-specific). Default: false */
 	readonly hot?: boolean;
+	/** Custom logger instance. Default: console */
 	readonly logger?: typeof console;
-	/** Authentication validator. Defaults to NoAuthValidator (allows all) */
+	/** Authentication validator for verifying user credentials. Default: NoAuthValidator (allows all) */
 	readonly authValidator?: AuthValidator;
-	/** Authorization rules. Defaults to DefaultAuthorizationRules (permissive) */
+	/** Authorization rules for controlling access to topics and peers. Default: DefaultAuthorizationRules (permissive) */
 	readonly authRules?: AuthorizationRules;
-	/** Enable rate limiting. Default: true */
+	/** Enable rate limiting per user. Default: true */
 	readonly enableRateLimit?: boolean;
-	/** Maximum message size in bytes. Default: 1MB */
+	/** Maximum message size in bytes. Messages exceeding this will be rejected. Default: 1048576 (1MB) */
 	readonly maxMessageSize?: number;
-	/** Enable session persistence (restore clientId on reconnect). Default: true */
+	/** Enable session persistence to restore client IDs on reconnection. Default: true */
 	readonly enableSessionPersistence?: boolean;
 }
 
 const BANNED_STRINGS = [".."] as const;
-
-interface WebSocketData {
+/**
+ * Internal metadata attached to each WebSocket connection.
+ * Contains connection details, authentication context, and session information.
+ * @internal
+ */ interface WebSocketData {
 	readonly url: string;
 	readonly host: string;
 	readonly origin: string;
@@ -64,6 +75,49 @@ const error = (...args: unknown[]) => Logger.error("[Server]", ...args);
 const warn = (...args: unknown[]) => Logger.warn("[Server]", ...args);
 const timeEnd = (label: string) => Logger.timeEnd(`[Server] ${label}`);
 
+/**
+ * Creates and starts an RPC WebSocket server with relay capabilities.
+ *
+ * The server supports:
+ * - Client-to-client messaging via relay routing
+ * - Topic-based pub/sub messaging
+ * - Session persistence for reconnection
+ * - Authentication and authorization
+ * - Rate limiting per user
+ * - Message size limits
+ * - Automatic heartbeat monitoring
+ *
+ * Messages can be routed in two ways:
+ * 1. Direct peer-to-peer: Include a `to` field with the recipient's client ID
+ * 2. Topic broadcast: Omit the `to` field to broadcast to all subscribers on the topic
+ *
+ * @param options - Server configuration options
+ * @returns The running Bun server instance
+ *
+ * @example
+ * ```typescript
+ * // Simple server with default settings
+ * const server = serve({ port: 8080 });
+ *
+ * // Production server with authentication
+ * import { SimpleAuthValidator, StrictAuthorizationRules } from './shared/Authorization';
+ *
+ * const server = serve({
+ *   hostname: '0.0.0.0',
+ *   port: 443,
+ *   authValidator: SimpleAuthValidator.FromOptions({
+ *     validTokens: ['secret-token-123']
+ *   }),
+ *   authRules: new StrictAuthorizationRules({
+ *     allowedTopics: ['public', 'chat'],
+ *     adminUsers: ['admin-user-id']
+ *   }),
+ *   enableRateLimit: true,
+ *   maxMessageSize: 512 * 1024, // 512KB
+ *   enableSessionPersistence: true
+ * });
+ * ```
+ */
 export function serve({
 	hostname = "localhost",
 	port = 3000,
@@ -104,7 +158,11 @@ export function serve({
 
 			timeEnd(`Request ${request.url}`);
 			if (request.headers.get("upgrade")) {
-				// Validate authentication before upgrade
+				// AUTHENTICATION FLOW:
+				// 1. Extract token from Authorization header or query parameter
+				// 2. Validate token using authValidator
+				// 3. Check if user can subscribe to requested topic
+				// 4. Upgrade to WebSocket if all checks pass
 				const token =
 					request.headers.get("authorization")?.replace("Bearer ", "") ||
 					new URL(request.url).searchParams.get("token");
@@ -135,12 +193,14 @@ export function serve({
 		websocket: <WebSocketHandler<WebSocketData>>{
 			async open(ws): Promise<void> {
 				const topic = ws.data.topic;
+				// Subscribe to topic for pub/sub messaging
 				ws.subscribe(topic);
 
-				// Register client
+				// Register client in global map for direct peer-to-peer routing
 				clients.set(ws.data.id, ws);
 
-				// Register session if persistence enabled
+				// Register session for reconnection support
+				// Maps sessionId -> clientId so reconnecting clients can restore their identity
 				if (enableSessionPersistence && ws.data.auth?.sessionId) {
 					sessions.set(ws.data.auth.sessionId, ws.data.id);
 				}
@@ -196,6 +256,7 @@ export function serve({
 					const limit = authRules.getRateLimit(ws.data.auth?.userId);
 
 					// Get or create rate limiter for this user
+					// Each user gets their own token bucket for rate limiting
 					let rateLimiter = rateLimiters.get(userId);
 					if (!rateLimiter) {
 						rateLimiter = RateLimiter.FromOptions({
@@ -205,6 +266,7 @@ export function serve({
 						rateLimiters.set(userId, rateLimiter);
 					}
 
+					// Check if user has tokens available (not rate limited)
 					if (!rateLimiter.tryConsume(userId)) {
 						warn(`[ws] Rate limit exceeded for ${userId}`);
 						ws.send(
@@ -225,7 +287,8 @@ export function serve({
 							: new TextDecoder().decode(message);
 					const parsed = JSON.parse(raw);
 
-					// Handle ping/pong heartbeat
+					// Handle ping/pong heartbeat messages
+					// Clients send ping with timestamp, server responds with pong
 					if (parsed.category === "ping") {
 						ws.send(
 							JSON.stringify({
@@ -241,9 +304,11 @@ export function serve({
 						return;
 					}
 
-					// If message has a specific destination, route it directly
+					// ROUTING LOGIC:
+					// If message has a 'to' field → direct peer-to-peer relay
+					// If message has no 'to' field → broadcast to topic
 					if (parsed.to) {
-						// Check authorization
+						// Check if sender is authorized to message this specific peer
 						if (!authRules.canMessagePeer(ws.data.auth?.userId, parsed.to)) {
 							warn(
 								`[ws] Unauthorized peer message from ${ws.data.id} to ${parsed.to}`,
@@ -259,9 +324,11 @@ export function serve({
 
 						const target = clients.get(parsed.to);
 						if (target) {
+							// Route message directly to the target peer
 							debug(`[ws] Routing message from ${ws.data.id} to ${parsed.to}`);
 							target.send(message);
 						} else {
+							// Target peer not found (disconnected or never existed)
 							warn(`[ws] Target ${parsed.to} not found`);
 							ws.send(
 								JSON.stringify({
@@ -272,7 +339,8 @@ export function serve({
 							);
 						}
 					} else {
-						// Check authorization for topic publish
+						// No 'to' field → broadcast to all subscribers on the topic
+						// Check if sender is authorized to publish to this topic
 						if (!authRules.canPublishToTopic(ws.data.auth?.userId, topic)) {
 							warn(
 								`[ws] Unauthorized publish to topic ${topic} from ${ws.data.id}`,
@@ -322,6 +390,16 @@ export function serve({
 	return server;
 }
 
+/**
+ * Extracts and constructs WebSocket metadata from the HTTP upgrade request.
+ * Handles session restoration by checking for previous session IDs.
+ *
+ * @param request - The HTTP upgrade request
+ * @param auth - Authentication context if user is authenticated, null otherwise
+ * @param enableSessionPersistence - Whether to attempt session restoration
+ * @returns WebSocket metadata object
+ * @internal
+ */
 function getWebSocketData(
 	request: Request,
 	auth: AuthContext | null,
@@ -329,14 +407,17 @@ function getWebSocketData(
 ): WebSocketData {
 	const url = new URL(request.url);
 
-	// Check for previous session ID to restore
+	// SESSION RESTORATION LOGIC:
+	// 1. Check if client provided a sessionId in URL query parameter
+	// 2. If found and session persistence enabled, try to restore previous clientId
+	// 3. If session expired/invalid or persistence disabled, generate new clientId
 	const previousSessionId = url.searchParams.get("sessionId") || undefined;
 	let id: string;
 
 	if (enableSessionPersistence && previousSessionId) {
 		const restoredClientId = sessions.get(previousSessionId);
 		if (restoredClientId) {
-			// Restore previous client ID
+			// Restore previous client ID for seamless reconnection
 			id = restoredClientId;
 			log(`[ws] Restoring session ${previousSessionId} with clientId ${id}`);
 		} else {
@@ -347,6 +428,7 @@ function getWebSocketData(
 			);
 		}
 	} else {
+		// No session restoration - generate new ID
 		id = crypto.randomUUID();
 	}
 
@@ -377,6 +459,14 @@ function getWebSocketData(
 	return data;
 }
 
+/**
+ * Routes HTTP requests to the appropriate API handler based on method.
+ *
+ * @param request - The HTTP request
+ * @param server - The Bun server instance
+ * @returns HTTP response
+ * @internal
+ */
 async function getResponse(
 	request: Request,
 	server: Server,

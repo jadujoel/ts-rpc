@@ -1,51 +1,65 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: safe usage */
 /** biome-ignore-all lint/suspicious/noExplicitAny: Explicit */
 
+/** Supported message types that can be queued for sending. */
 export type MessageQueueItem = string | ArrayBuffer | Blob | ArrayBufferView;
+/** Queue of messages waiting to be sent when connection is established. */
 export type MessageQueue = MessageQueueItem[];
+/** WebSocket open event handler function type. */
 export type OnOpenHandler = ((this: WebSocket, ev: Event) => any) | null;
+/** WebSocket message event handler function type. */
 export type OnMessageHandler =
 	| ((this: WebSocket, ev: MessageEvent) => any)
 	| null;
+/** WebSocket close event handler function type. */
 export type OnCloseHandler = ((this: WebSocket, ev: CloseEvent) => any) | null;
+/** WebSocket error event handler function type. */
 export type OnErrorHandler = ((this: WebSocket, ev: Event) => any) | null;
+/** Map of event names to their registered listeners. */
 export type EventListenerMap<
 	TEventNames extends string = string,
 	TSet extends
 		Set<EventListenerOrEventListenerObject> = Set<EventListenerOrEventListenerObject>,
 > = Map<TEventNames, TSet>;
 
+/**
+ * Configuration options for creating a RetrySocket instance.
+ * @template TUrl - The WebSocket URL string type
+ */
 export interface RetrySocketFromOptions<TUrl extends string = string> {
-	/** @default "arraybuffer" */
+	/** Binary data type for WebSocket messages. Default: "arraybuffer" */
 	readonly binaryType?: BinaryType;
-	/** @default new Map() */
+	/** Map of event listeners to register. Default: new Map() */
 	readonly eventListeners?: EventListenerMap;
-	/** @default 30_000 */
+	/** Maximum delay between reconnection attempts in milliseconds. Default: 30000 (30 seconds) */
 	readonly maxReconnectInterval?: number;
-	/** @default [] */
+	/** Queue of messages to send when connection is established. Default: [] */
 	readonly messageQueue?: MessageQueue;
-	/** @default false */
+	/** Whether the socket was closed intentionally by the user (prevents auto-reconnect). Default: false */
 	readonly isClosedByUser?: boolean;
-	/** @default null */
+	/** Handler for close events. Default: null */
 	readonly onclose?: OnCloseHandler;
-	/** @default null */
+	/** Handler for error events. Default: null */
 	readonly onerror?: OnErrorHandler;
-	/** @default null */
+	/** Handler for message events. Default: null */
 	readonly onmessage?: OnMessageHandler;
-	/** @default null */
+	/** Handler for open events. Default: null */
 	readonly onopen?: OnOpenHandler;
-	/** @default new WebSocket(url) */
+	/** Existing WebSocket instance to wrap. If not provided, a new one will be created. Default: null */
 	readonly socket?: WebSocket | null;
-	/** * @default 0 */
+	/** Current count of reconnection attempts. Used for exponential backoff. Default: 0 */
 	readonly reconnectAttempts?: number;
-	/** @default 1000 */
+	/** Initial delay between reconnection attempts in milliseconds. Grows exponentially with each attempt. Default: 1000 (1 second) */
 	readonly reconnectInterval?: number;
+	/** WebSocket URL to connect to. Must be ws:// or wss:// protocol. */
 	readonly url: TUrl;
 }
 
+/** Event names that RetrySocket can emit. */
 export type RetrySocketEventName = "message" | "open" | "close" | "error";
 /**
- * 0, 1, 2, 3 are used for readyState to match WebSocket constants for easier integration with existing code and debugging.
+ * WebSocket readyState values.
+ * Uses 0, 1, 2, 3 to match WebSocket constants for easier integration and debugging.
  */
 export type WebSocketReadyStateValue =
 	| typeof WebSocket.CONNECTING
@@ -53,11 +67,45 @@ export type WebSocketReadyStateValue =
 	| typeof WebSocket.CLOSING
 	| typeof WebSocket.CLOSED;
 
+/**
+ * WebSocket wrapper with automatic reconnection and message queueing.
+ *
+ * Automatically reconnects on connection loss using exponential backoff.
+ * Queues messages sent while disconnected and flushes them upon reconnection.
+ * Implements the WebSocket interface for drop-in compatibility.
+ *
+ * Key features:
+ * - Exponential backoff: Starts at `reconnectInterval`, doubles each attempt up to `maxReconnectInterval`
+ * - Message queueing: Messages sent while disconnected are queued and flushed on reconnect
+ * - Event re-entrancy prevention: Prevents duplicate event dispatches during reconnection
+ * - Session persistence: Maintains state across reconnections
+ *
+ * @template TUrl - The WebSocket URL string type
+ *
+ * @example
+ * ```typescript
+ * // Simple usage
+ * const socket = RetrySocket.FromUrl('ws://localhost:8080');
+ * socket.addEventListener('open', () => console.log('Connected'));
+ * socket.addEventListener('message', (ev) => console.log('Received:', ev.data));
+ * socket.send('Hello');
+ *
+ * // Advanced usage with custom options
+ * const socket = RetrySocket.FromOptions({
+ *   url: 'ws://localhost:8080',
+ *   reconnectInterval: 2000,  // Start with 2 second delay
+ *   maxReconnectInterval: 60000,  // Cap at 60 seconds
+ *   onopen: () => console.log('Connected'),
+ *   onerror: (err) => console.error('Error:', err)
+ * });
+ * ```
+ */
 export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	public static readonly CONNECTING: 0 = 0;
 	public static readonly OPEN: 1 = 1;
 	public static readonly CLOSING: 2 = 2;
 	public static readonly CLOSED: 3 = 3;
+	/** Default configuration options for RetrySocket instances. */
 	public static DefaultOptions: Required<RetrySocketFromOptions> = {
 		url: "",
 		binaryType: "arraybuffer",
@@ -74,9 +122,10 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		socket: null,
 	};
 
-	// Track which events are currently being dispatched to prevent re-entrancy
+	/** Tracks which event types are currently being dispatched to prevent re-entrancy. */
 	private dispatchingEvents = new Set<string>();
 
+	/** Result codes for send operations. */
 	public static SendResult = {
 		Sent: 0,
 		Queued: 1,
@@ -95,14 +144,33 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		},
 	} as const;
 
+	/** Standard error instances used throughout RetrySocket. */
 	public static readonly Errors = {
 		CloseTimeout: new Error("WebSocket close timed out"),
 	} as const;
 
+	/** Default timeout values for various operations in milliseconds. */
 	public static readonly Timeouts = {
 		Close: 1_000,
 	} as const;
 
+	/**
+	 * Creates a RetrySocket instance from configuration options.
+	 * Immediately begins connection attempt.
+	 *
+	 * @template TUrl - The WebSocket URL string type
+	 * @param options - Configuration options
+	 * @returns A connected RetrySocket instance
+	 *
+	 * @example
+	 * ```typescript
+	 * const socket = RetrySocket.FromOptions({
+	 *   url: 'ws://localhost:8080',
+	 *   reconnectInterval: 2000,
+	 *   maxReconnectInterval: 60000
+	 * });
+	 * ```
+	 */
 	static FromOptions<TUrl extends string = string>(
 		options: RetrySocketFromOptions<TUrl>,
 	): RetrySocket<TUrl> {
@@ -126,6 +194,19 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		return socket;
 	}
 
+	/**
+	 * Creates a RetrySocket instance from a URL with default options.
+	 * Immediately begins connection attempt.
+	 *
+	 * @template TUrl - The WebSocket URL string type
+	 * @param url - WebSocket URL to connect to
+	 * @returns A connected RetrySocket instance
+	 *
+	 * @example
+	 * ```typescript
+	 * const socket = RetrySocket.FromUrl('ws://localhost:8080');
+	 * ```
+	 */
 	static FromUrl<TUrl extends string = string>(url: TUrl): RetrySocket<TUrl> {
 		const socket = new RetrySocket(url);
 		socket.connect();
@@ -216,10 +297,16 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		};
 	}
 
+	/**
+	 * Schedules a reconnection attempt using exponential backoff.
+	 * Delay formula: min(reconnectInterval * 2^reconnectAttempts, maxReconnectInterval)
+	 * @private
+	 */
 	private scheduleReconnect(): void {
 		if (this.isClosedByUser) {
 			return;
 		}
+		// Exponential backoff: delay = initialInterval * 2^attempts, capped at maxInterval
 		const delay = Math.min(
 			this.reconnectInterval * 2 ** this.reconnectAttempts,
 			this.maxReconnectInterval,
@@ -231,6 +318,11 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		global.setTimeout(() => this.connect(), delay);
 	}
 
+	/**
+	 * Flushes all queued messages to the WebSocket.
+	 * Only sends if connection is open.
+	 * @private
+	 */
 	private flushMessageQueue(): void {
 		if (this.isClosedByUser) {
 			return;
@@ -246,6 +338,23 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
+	/**
+	 * Sends data over the WebSocket connection.
+	 * If connection is not open, queues the message for later delivery.
+	 *
+	 * @param data - The data to send
+	 * @returns Result code indicating if message was sent, queued, or failed
+	 *
+	 * @example
+	 * ```typescript
+	 * const result = socket.send('Hello');
+	 * if (result === RetrySocket.SendResult.Sent) {
+	 *   console.log('Sent immediately');
+	 * } else if (result === RetrySocket.SendResult.Queued) {
+	 *   console.log('Queued for later');
+	 * }
+	 * ```
+	 */
 	public send(
 		data: string | ArrayBuffer | Blob | ArrayBufferView,
 	):
@@ -263,6 +372,18 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		return RetrySocket.SendResult.Queued;
 	}
 
+	/**
+	 * Disposes of the socket, closing the connection and clearing all resources.
+	 * Clears message queue, event listeners, and all handlers.
+	 *
+	 * @returns Promise that resolves when disposal is complete
+	 *
+	 * @example
+	 * ```typescript
+	 * await socket.dispose();
+	 * // Socket is now fully cleaned up
+	 * ```
+	 */
 	public async dispose(): Promise<void> {
 		console.time("RetrySocket Dispose");
 		try {
@@ -280,6 +401,21 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		console.timeEnd("RetrySocket Dispose");
 	}
 
+	/**
+	 * Closes the WebSocket connection gracefully.
+	 * Sets `isClosedByUser` flag to prevent automatic reconnection.
+	 *
+	 * @param code - WebSocket close code
+	 * @param reason - Human-readable close reason
+	 * @param timeout - Maximum time to wait for close event in milliseconds. Default: 1000 (1 second)
+	 * @returns Promise that resolves when connection is closed
+	 * @throws {RetrySocket.Errors.CloseTimeout} If close doesn't complete within timeout
+	 *
+	 * @example
+	 * ```typescript
+	 * await socket.close(1000, 'Normal closure');
+	 * ```
+	 */
 	public close(
 		code?: number,
 		reason?: string,
@@ -322,6 +458,21 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		});
 	}
 
+	/**
+	 * Registers an event listener for the specified event type.
+	 * Listeners are preserved across reconnections.
+	 *
+	 * @param type - Event type to listen for
+	 * @param listener - Event listener function or object
+	 * @param options - Listener options (capture, once, passive)
+	 *
+	 * @example
+	 * ```typescript
+	 * socket.addEventListener('message', (ev) => {
+	 *   console.log('Received:', ev.data);
+	 * });
+	 * ```
+	 */
 	public addEventListener(
 		type: RetrySocketEventName | (string & {}),
 		listener: EventListener | EventListenerObject,
@@ -337,6 +488,13 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		this.eventListeners.get(type)!.set(listener, options);
 	}
 
+	/**
+	 * Removes a previously registered event listener.
+	 *
+	 * @param type - Event type
+	 * @param listener - Event listener to remove
+	 * @param _options - Unused, kept for interface compatibility
+	 */
 	public removeEventListener(
 		type: RetrySocketEventName | (string & {}),
 		listener: EventListenerOrEventListenerObject,
@@ -349,8 +507,17 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
+	/**
+	 * Dispatches an event to all registered listeners.
+	 * Prevents re-entrant dispatches of the same event type.
+	 *
+	 * @param event - Event to dispatch
+	 * @returns True if event was dispatched successfully
+	 * @internal
+	 */
 	public dispatchEvent(event: CloseEvent | Event): boolean {
-		// Prevent re-entrant dispatch of the same event type
+		// Prevent re-entrant dispatch: Don't dispatch same event type while already dispatching it
+		// This prevents infinite loops during reconnection when events trigger actions that cause more events
 		if (this.dispatchingEvents.has(event.type)) {
 			console.debug(
 				`[RS] Event "${event.type}" is already being dispatched, skipping`,
@@ -360,7 +527,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 
 		const listenerMap = this.eventListeners.get(event.type);
 		if (!listenerMap) {
-			// Per EventTarget spec, return true if no listeners canceled it (assuming no cancelable logic implemented here properly yet)
+			// No listeners registered for this event type
 			return true;
 		}
 
@@ -369,7 +536,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 
 		try {
 			let result = true;
-			// Iterate over a copy to safely handle modifications during iteration
+			// Iterate over a copy to safely handle listener modifications during iteration
 			for (const [listener, options] of Array.from(listenerMap.entries())) {
 				if (typeof listener === "function") {
 					listener.call(this, event);
@@ -379,6 +546,7 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 				if (event.defaultPrevented) {
 					result = false;
 				}
+				// Remove listener if 'once' option was set
 				if (typeof options === "object" && options.once) {
 					this.removeEventListener(event.type, listener);
 				}
@@ -390,17 +558,22 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
-	// Getters for proxying properties if needed
+	/**
+	 * Gets the current connection state.
+	 * @returns WebSocket readyState value (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)
+	 */
 	public get readyState(): WebSocketReadyStateValue {
 		return this.socket
 			? (this.socket.readyState as WebSocketReadyStateValue)
 			: WebSocket.CLOSED;
 	}
 
+	/** Gets the binary data type for WebSocket messages. */
 	public get binaryType(): BinaryType {
 		return this.socket ? this.socket.binaryType : this._binaryType;
 	}
 
+	/** Sets the binary data type for WebSocket messages. */
 	public set binaryType(value: BinaryType) {
 		if (this.isClosedByUser) {
 			return;
@@ -411,14 +584,17 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 		}
 	}
 
+	/** Gets the number of bytes queued but not yet sent. */
 	public get bufferedAmount(): number {
 		return this.socket ? this.socket.bufferedAmount : 0;
 	}
 
+	/** Gets the extensions selected by the server. */
 	public get extensions(): string {
 		return this.socket ? this.socket.extensions : "";
 	}
 
+	/** Gets the subprotocol selected by the server. */
 	public get protocol(): string {
 		return this.socket ? this.socket.protocol : "";
 	}

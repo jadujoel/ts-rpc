@@ -45,12 +45,12 @@ The Service connects to the relay and listens for requests. It uses the `match` 
 Create `my-service.ts`:
 
 ```typescript
-import { Socket } from './shared/socket';
+import { RpcPeer } from './shared/RpcPeer';
 import type { MyRequestApi, MyResponseApi } from './shared/my-api-types';
 
 // Connect to the Relay Server
 const url = "ws://127.0.0.1:8080";
-const rpc = Socket.fromUrl<MyRequestApi, MyResponseApi>(url);
+const rpc = RpcPeer.FromUrl<MyRequestApi, MyResponseApi>(url);
 
 // Define your logic state
 let currentScore = 0;
@@ -84,19 +84,22 @@ Run it: `bun my-service.ts`
 
 ### 4. Create the Client
 
-The Client connects to the same relay and sends requests using `.call()`. It gets a strongly-typed response back.
+The Client connects to the same relay and sends requests using `.request()` (or its alias `.call()`). It gets a strongly-typed response back.
 
 Create `my-client.ts`:
 
 ```typescript
-import { Socket } from './shared/socket';
+import { RpcPeer } from './shared/RpcPeer';
 import type { MyRequestApi, MyResponseApi } from './shared/my-api-types';
 
 const url = "ws://127.0.0.1:8080";
-const client = Socket.fromUrl<MyRequestApi, MyResponseApi>(url);
+const client = RpcPeer.FromUrl<MyRequestApi, MyResponseApi>(url);
+
+// Wait for connection to be established
+await client.waitForWelcome();
 
 // Example 1: Update Score
-const response = await client.call({
+const response = await client.request({
   type: "update-score",
   points: 10
 });
@@ -107,7 +110,7 @@ if (response.data.type === "update-score") {
 }
 
 // Example 2: Get User
-const userResponse = await client.call({
+const userResponse = await client.request({
   type: "get-user",
   id: "1"
 });
@@ -126,6 +129,100 @@ if (userResponse.data.type === "get-user") {
 ```
 
 Run it: `bun my-client.ts`
+
+## Architecture
+
+This library uses a **relay server architecture** for peer-to-peer communication:
+
+```
+┌─────────┐          ┌─────────────┐          ┌─────────┐
+│ Client  │ ◄───────► │ Relay Server│ ◄───────► │ Service │
+│  (Peer) │  WebSocket│   (Hub)     │  WebSocket│  (Peer) │
+└─────────┘           └─────────────┘            └─────────┘
+```
+
+### Message Routing
+
+The relay server supports two routing modes:
+
+1. **Direct Peer-to-Peer**: Messages with a `to` field are routed directly to the target peer by client ID
+   ```typescript
+   peer.request({ type: "ping" }, "target-client-id-456");
+   ```
+
+2. **Topic Broadcast**: Messages without a `to` field are broadcast to all subscribers on the topic
+   ```typescript
+   // Connects to topic "chat"
+   const peer = RpcPeer.FromOptions({ url: "ws://server/chat", ... });
+   peer.send({ type: "message", text: "Hello everyone!" });
+   ```
+
+### Connection Lifecycle
+
+1. **Connect**: Client opens WebSocket to server
+2. **Welcome**: Server assigns unique `clientId` and optional `sessionId`
+3. **Ready**: Client can send/receive messages
+4. **Reconnect**: `RetrySocket` automatically reconnects with exponential backoff
+5. **Restore**: Using `sessionId` preserves identity across reconnections
+
+### Key Components
+
+- **RpcPeer**: Client-side WebSocket wrapper with RPC and streaming
+- **RetrySocket**: Automatic reconnection with message queueing
+- **StreamManager**: Multiplexes multiple streams over one connection
+- **serve()**: Relay server with auth, rate limiting, and routing
+
+## API Reference
+
+### RpcPeer Methods
+
+| Method | Description | Returns |
+|--------|-------------|---------|
+| `FromOptions(options)` | Create a new peer with custom configuration | `RpcPeer` |
+| `FromUrl(url)` | Create a new peer with default configuration | `RpcPeer` |
+| `waitForWelcome(timeout?)` | Wait for server welcome message | `Promise<clientId>` |
+| `request(data, to?, timeout?)` | Send request and wait for response | `Promise<RpcResponse>` |
+| `send(data)` | Send one-way message (fire-and-forget) | `void` |
+| `match(handler)` | Register auto-responder for incoming requests | `void` |
+| `respondTo(request, data)` | Send response to a specific request | `void` |
+| `sendStream(iterable, id?)` | Send AsyncIterable as stream | `Promise<streamId>` |
+| `receiveStream(id?)` | Create receiving stream | `[streamId, ReadableStream]` |
+| `abortStream(id)` | Abort outgoing stream | `void` |
+| `close(code?, reason?, timeout?)` | Gracefully close connection | `Promise<void>` |
+| `dispose()` | Clean up all resources | `Promise<void>` |
+
+### RpcPeerFromOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `url` | string | required | WebSocket URL (ws:// or wss://) |
+| `name` | string | "RpcPeer" | Display name for this peer |
+| `requestSchema` | z.Schema | undefined | Zod schema for request validation |
+| `responseSchema` | z.Schema | undefined | Zod schema for response validation |
+| `sessionId` | string | undefined | Session ID for reconnection |
+| `enableHeartbeat` | boolean | false | Enable automatic heartbeat pings |
+| `heartbeatInterval` | number | 30000 | Heartbeat interval in milliseconds |
+
+### ServeOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `hostname` | string | "localhost" | Hostname to bind to |
+| `port` | number | 3000 | Port to listen on |
+| `authValidator` | AuthValidator | NoAuthValidator | Authentication validator |
+| `authRules` | AuthorizationRules | DefaultAuthorizationRules | Authorization rules |
+| `enableRateLimit` | boolean | true | Enable per-user rate limiting |
+| `maxMessageSize` | number | 1048576 | Maximum message size in bytes (1MB) |
+| `enableSessionPersistence` | boolean | true | Enable session restoration |
+
+### Authorization Classes
+
+| Class | Description | Use Case |
+|-------|-------------|----------|
+| `NoAuthValidator` | Allows all connections | Development, public servers |
+| `SimpleAuthValidator` | Token-based authentication | Simple apps with static tokens |
+| `DefaultAuthorizationRules` | Permissive rules (allows all) | Development |
+| `StrictAuthorizationRules` | Role-based access control | Production with fine-grained control |
 
 ## Example Provided
 
@@ -210,6 +307,62 @@ Built-in protection against abuse:
 - Rate limiting per user (token bucket algorithm)
 - Automatic cleanup on disconnect
 
-See `example-auth.ts` for complete demonstration.
+See [examples/authorization.ts](examples/authorization.ts) for complete demonstration.
 
-**Full Documentation:** See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed implementation guide.
+## Streaming
+
+The library supports bidirectional streaming for efficient transmission of large datasets or real-time updates.
+
+### Sending a Stream
+
+Send an `AsyncIterable` as a stream:
+
+```typescript
+async function* generateData() {
+  for (let i = 0; i < 100; i++) {
+    yield { count: i, timestamp: Date.now() };
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+const streamId = await peer.sendStream(generateData());
+console.log(`Stream ${streamId} started`);
+```
+
+### Receiving a Stream
+
+Create a receiving stream and process incoming data:
+
+```typescript
+const [streamId, stream] = peer.receiveStream<{count: number; timestamp: number}>();
+
+// Send the streamId to the remote peer so they know where to send data
+
+for await (const data of stream) {
+  console.log(`Received: count=${data.count}, time=${data.timestamp}`);
+}
+```
+
+### Bidirectional Streaming
+
+Both peers can send and receive simultaneously:
+
+```typescript
+// Peer A: Send and receive
+const [receiveId, receiveStream] = peerA.receiveStream();
+// Tell peer B about receiveId...
+
+const sendStreamId = await peerA.sendStream(generateData());
+// Process incoming stream
+for await (const data of receiveStream) {
+  console.log('Received from B:', data);
+}
+```
+
+Streams automatically handle:
+- **Backpressure**: Pauses sending when buffer is full
+- **Error handling**: Propagates errors across the network
+- **Cleanup**: Aborts on disconnect or error
+- **Multiplexing**: Multiple streams over one WebSocket
+
+See [examples/stream.ts](examples/stream.ts) and [examples/StreamSimple.ts](examples/StreamSimple.ts) for complete examples.
