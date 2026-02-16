@@ -257,12 +257,11 @@ async function exampleClient() {
 	console.log(`(user2 rate limit: ${rules.getRateLimit("user2")} msg/s)`);
 
 	// Clean up
-	setTimeout(async () => {
-		await client1Reconnected.close();
-		await client2.close();
-		server.stop();
-		process.exit(0);
-	}, 2000);
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	await client1Reconnected.close();
+	await client2.close();
+	await server.stop(true);
+	console.log("\n=== Example Complete ===");
 }
 
 // Run example if this file is executed directly

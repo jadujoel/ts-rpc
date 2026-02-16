@@ -28,9 +28,9 @@ Document every property unless it is completely self-explanatory.
 /**
  * Configuration for the document processor.
  */
-interface ProcessorConfig {
+readonly interface ProcessorConfig {
   /** The maximum file size in bytes. Default is 5MB. */
-  maxSize: number;
+  readonly maxSize: number;
 }
 
 ```

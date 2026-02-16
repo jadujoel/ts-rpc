@@ -147,6 +147,31 @@ export async function rateLimitingExample() {
 
 	console.log("Server started with rate limiting enabled\n");
 
+	// Create server peer to handle requests
+	const serverPeer = RpcPeer.FromOptions({
+		url: "ws://127.0.0.1:8094/server?token=admin-token",
+		name: "ServerPeer",
+		requestSchema: RequestSchema,
+		responseSchema: ResponseSchema,
+	});
+
+	serverPeer.match(async (data) => {
+		switch (data.type) {
+			case "ping":
+				return {
+					type: "pong" as const,
+					timestamp: Date.now(),
+				};
+			case "heavy":
+				return {
+					type: "success" as const,
+					message: "Processed",
+				};
+		}
+	});
+
+	await serverPeer.waitForWelcome();
+
 	// Create admin peer
 	const adminPeer = RpcPeer.FromOptions({
 		url: "ws://127.0.0.1:8094/test?token=admin-token",
@@ -184,10 +209,13 @@ export async function rateLimitingExample() {
 
 	for (const i of requests) {
 		try {
-			await adminPeer.call({
-				type: "ping",
-				timestamp: Date.now(),
-			});
+			await adminPeer.call(
+				{
+					type: "ping",
+					timestamp: Date.now(),
+				},
+				serverPeer.clientId,
+			);
 			adminSuccess++;
 			if (i % 5 === 0) {
 				console.log(`  Completed ${i} requests...`);
@@ -255,6 +283,7 @@ export async function rateLimitingExample() {
 	// Cleanup
 	console.log("\n--- Cleanup ---");
 	await adminPeer.dispose();
+	await serverPeer.dispose();
 	await server.stop(true);
 
 	console.log("\n=== Example Complete ===");

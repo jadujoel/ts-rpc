@@ -81,6 +81,8 @@ export async function streamBackpressureExample() {
 				const count = data.count;
 				// Create fast stream
 				async function* fastStream() {
+					// Small delay to give client time to setup receiver
+					await delay(100);
 					for (let i = 1; i <= count; i++) {
 						yield { index: i, timestamp: Date.now() };
 						await delay(50); // Fast: 20 items/sec
@@ -168,69 +170,70 @@ export async function streamBackpressureExample() {
 	console.log("--- Scenario 1: Multiple Concurrent Streams ---");
 	console.log("Starting 3 streams simultaneously...\n");
 
-	const stream1Promise = clientPeer.call({
-		type: "fast-stream",
-		count: 5,
-	});
+	// Request and setup each stream individually to avoid race condition
+	const setupStream = async (count: number, streamName: string) => {
+		const response = await clientPeer.call({
+			type: "fast-stream",
+			count,
+		});
 
-	const stream2Promise = clientPeer.call({
-		type: "fast-stream",
-		count: 5,
-	});
+		if (response.data.type !== "stream") {
+			console.log(`  [${streamName}] Failed to get stream`);
+			return null;
+		}
 
-	const stream3Promise = clientPeer.call({
-		type: "fast-stream",
-		count: 5,
-	});
+		// Setup receiver immediately after getting response
+		const [, stream] = clientPeer.receiveStream<ArrayBuffer>(
+			response.data.streamId,
+		);
+		return { streamName, reader: stream.getReader() };
+	};
 
-	const [response1, response2, response3] = await Promise.all([
-		stream1Promise,
-		stream2Promise,
-		stream3Promise,
+	// Start all three requests simultaneously
+	const streamSetups = await Promise.all([
+		setupStream(5, "Stream1"),
+		setupStream(5, "Stream2"),
+		setupStream(5, "Stream3"),
 	]);
 
-	// Consume streams concurrently
-	if (
-		response1.data.type === "stream" &&
-		response2.data.type === "stream" &&
-		response3.data.type === "stream"
-	) {
-		console.log("Consuming 3 streams concurrently:");
+	// Filter out nulls and consume streams
+	const validStreams = streamSetups.filter(
+		(
+			s,
+		): s is {
+			streamName: string;
+			reader: ReadableStreamDefaultReader<ArrayBuffer>;
+		} => s !== null,
+	);
 
-		const consumeStream = async (
-			streamId: string,
-			streamName: string,
-		): Promise<void> => {
-			const stream = clientPeer.receiveStream<ArrayBuffer>(streamId);
-			if (!stream) {
-				console.log(`  [${streamName}] Stream not found`);
-				return;
+	console.log("Consuming 3 streams concurrently:");
+
+	const consumeStream = async (
+		reader: ReadableStreamDefaultReader<ArrayBuffer>,
+		streamName: string,
+	): Promise<void> => {
+		let count = 0;
+
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				count++;
+				const data = JSON.parse(new TextDecoder().decode(value));
+				console.log(`  [${streamName}] Item ${count}: index=${data.index}`);
 			}
+			console.log(`  [${streamName}] Complete (${count} items)\n`);
+		} finally {
+			reader.releaseLock();
+		}
+	};
 
-			const reader = stream[1].getReader();
-			let count = 0;
-
-			try {
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-
-					count++;
-					const data = JSON.parse(new TextDecoder().decode(value));
-					console.log(`  [${streamName}] Item ${count}: index=${data.index}`);
-				}
-				console.log(`  [${streamName}] Complete (${count} items)\n`);
-			} finally {
-				reader.releaseLock();
-			}
-		};
-
-		await Promise.all([
-			consumeStream(response1.data.streamId, "Stream1"),
-			consumeStream(response2.data.streamId, "Stream2"),
-			consumeStream(response3.data.streamId, "Stream3"),
-		]);
-	}
+	await Promise.all(
+		validStreams.map(({ reader, streamName }) =>
+			consumeStream(reader, streamName),
+		),
+	);
 
 	// Scenario 2: Backpressure with large data
 	console.log("\n--- Scenario 2: Backpressure with Large Data ---");

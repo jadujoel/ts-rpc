@@ -490,7 +490,7 @@ async function main() {
 
 	// Shutdown server
 	console.log("\n[Server] Shutting down...");
-	server.stop();
+	await server.stop(true);
 	console.log("[Server] Shutdown complete");
 }
 

@@ -148,15 +148,7 @@ export async function authScenariosExample() {
 	});
 
 	await openPeer.waitForWelcome();
-	console.log("✓ Connected without authentication");
-
-	const publicResponse = await openPeer.call({
-		type: "public",
-		message: "Hello world",
-	});
-	console.log(
-		`✓ Public request: ${publicResponse.data.type === "success" ? publicResponse.data.message : "failed"}`,
-	);
+	console.log("✓ Connected without authentication\n");
 
 	await openPeer.dispose();
 	await noAuthServer.stop(true);
@@ -191,15 +183,7 @@ export async function authScenariosExample() {
 	});
 
 	await authenticatedPeer.waitForWelcome();
-	console.log("✓ Connected with valid token");
-
-	const authResponse = await authenticatedPeer.call({
-		type: "private",
-		message: "Authenticated message",
-	});
-	console.log(
-		`✓ Private request: ${authResponse.data.type === "success" ? authResponse.data.message : "failed"}`,
-	);
+	console.log("✓ Connected with valid token\n");
 
 	await authenticatedPeer.dispose();
 
@@ -253,7 +237,7 @@ export async function authScenariosExample() {
 
 	console.log("\nConnecting admin user...");
 	const adminPeer = RpcPeer.FromOptions({
-		url: "ws://127.0.0.1:8096/test?token=admin-token-456",
+		url: "ws://127.0.0.1:8096/admin-channel?token=admin-token-456",
 		name: "AdminClient",
 		requestSchema: RequestSchema,
 		responseSchema: ResponseSchema,
@@ -261,7 +245,7 @@ export async function authScenariosExample() {
 
 	console.log("Connecting regular user...");
 	const userPeer = RpcPeer.FromOptions({
-		url: "ws://127.0.0.1:8096/test?token=user-token-123",
+		url: "ws://127.0.0.1:8096/public-channel?token=user-token-123",
 		name: "UserClient",
 		requestSchema: RequestSchema,
 		responseSchema: ResponseSchema,
@@ -297,23 +281,36 @@ export async function authScenariosExample() {
 	await userPeer.waitForWelcome();
 
 	console.log("\n✓ Both users connected");
+	console.log(`  Admin clientId: ${adminPeer.clientId}`);
+	console.log(`  User clientId: ${userPeer.clientId}`);
 
-	// Admin can perform admin actions
+	// Verify clientIds are set
+	if (!adminPeer.clientId || !userPeer.clientId) {
+		throw new Error("Client IDs not properly set");
+	}
+
+	// Admin can perform admin actions (send to user peer)
 	console.log("\nAdmin performing admin action...");
-	const adminActionResponse = await adminPeer.call({
-		type: "admin-only",
-		action: "delete-all-data",
-	});
+	const adminActionResponse = await adminPeer.call(
+		{
+			type: "admin-only",
+			action: "delete-all-data",
+		},
+		userPeer.clientId,
+	);
 	console.log(
 		`  Admin: ${adminActionResponse.data.type === "success" ? adminActionResponse.data.message : "failed"}`,
 	);
 
-	// Regular user cannot perform admin actions
+	// Regular user cannot perform admin actions (send to admin peer)
 	console.log("Regular user attempting admin action...");
-	const userActionResponse = await userPeer.call({
-		type: "admin-only",
-		action: "delete-all-data",
-	});
+	const userActionResponse = await userPeer.call(
+		{
+			type: "admin-only",
+			action: "delete-all-data",
+		},
+		adminPeer.clientId,
+	);
 	console.log(
 		`  User: ${userActionResponse.data.type === "forbidden" ? userActionResponse.data.reason : "unexpected"}`,
 	);
