@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RetrySocket } from "./RetrySocket.ts";
+import { StreamManager, type StreamManagerOptions } from "./RpcStream.ts";
 import {
 	getCloseCodeDescription,
 	type WebSocketCloseCode,
@@ -139,7 +140,7 @@ export type ExplicitAny = any;
 export interface PendingPromiseItem {
 	readonly resolve: (data: ExplicitAny) => void;
 	readonly reject: (err: ExplicitAny) => void;
-	readonly timer: ReturnType<typeof setTimeout>;
+	readonly timer: SetTimeoutReturn;
 }
 
 export type PendingPromiseMap<TPromiseType extends string = string> = Map<
@@ -165,7 +166,10 @@ export interface RpcPeerFromOptions<
 	readonly requestSchema: TRequestSchema;
 	readonly responseSchema: TResponseSchema;
 	readonly enableHeartbeat?: boolean;
+	readonly heartbeatTimer?: ReturnType<typeof setTimeout> | null;
 	readonly heartbeatInterval?: number;
+	readonly streamOptions?: StreamManagerOptions;
+	readonly streamManager?: StreamManager;
 }
 
 export type MatchHandler<
@@ -188,6 +192,9 @@ export type RpcPeerEventMap = {
 	readonly request: CustomEvent<RpcRequest>;
 	readonly response: CustomEvent<RpcResponse>;
 };
+
+export type RpcPeerState = "connecting" | "open" | "closing" | "closed";
+
 export function isWelcomeMessage<TClientId extends string = string>(
 	message: unknown,
 	clientId?: TClientId,
@@ -226,11 +233,13 @@ export class RpcPeer<
 		public readonly responseSchema: TResponseSchema | undefined,
 		public sessionId: string | undefined,
 		private heartbeatTimer: SetTimeoutReturn | null = null,
-		private heartbeatInterval = 30_000,
+		private readonly heartbeatInterval: number = RpcPeer.DefaultHeartbeatInterval,
+		public readonly streamManager: StreamManager = new StreamManager(),
 	) {
 		super();
 	}
 
+	public static readonly DefaultHeartbeatInterval = 30_000 as const;
 	public static readonly MessageSchema = RpcMessageSchema;
 	public static readonly Errors = {
 		InvalidMessageFormat: new Error("Invalid message format"),
@@ -258,6 +267,13 @@ export class RpcPeer<
 	): CustomEvent<TRpcWelcome> {
 		return new CustomEvent("welcome", { detail });
 	}
+
+	static readonly PossibleStates = [
+		"connecting",
+		"open",
+		"closing",
+		"closed",
+	] as const;
 
 	public static FromOptions<
 		TRequestSchema extends z.Schema<ExplicitAny> = z.Schema<ExplicitAny>,
@@ -311,11 +327,10 @@ export class RpcPeer<
 			options.requestSchema ?? undefined,
 			options.responseSchema ?? undefined,
 			options.sessionId,
+			options.heartbeatTimer ?? null,
+			options.heartbeatInterval ?? RpcPeer.DefaultHeartbeatInterval,
+			options.streamManager ?? StreamManager.FromOptions(options.streamOptions),
 		);
-
-		if (options.heartbeatInterval) {
-			peer.heartbeatInterval = options.heartbeatInterval;
-		}
 
 		peer.retrySocket.addEventListener("message", (ev) =>
 			peer.handleMessage(ev as MessageEvent),
@@ -333,6 +348,8 @@ export class RpcPeer<
 		peer.retrySocket.addEventListener("close", (ev: Event): void => {
 			const actual = ev as CloseEvent;
 			peer.stopHeartbeat();
+			// Clean up all active streams when connection closes
+			peer.streamManager.cleanup();
 			peer.dispatchEvent(
 				new CloseEvent("close", {
 					code: actual.code,
@@ -360,6 +377,9 @@ export class RpcPeer<
 		await this.close();
 
 		await this.retrySocket.dispose();
+
+		// Clean up all active streams
+		this.streamManager.cleanup();
 
 		// Reject all pending promises before closing
 		for (const item of this.pendingPromises.values()) {
@@ -392,9 +412,8 @@ export class RpcPeer<
 		}
 	}
 
-	get state(): "closed" | "connecting" | "open" | "closing" {
-		const states = ["connecting", "open", "closing", "closed"] as const;
-		return states[this.retrySocket.readyState] ?? "closed";
+	get state(): RpcPeerState {
+		return RpcPeer.PossibleStates[this.retrySocket.readyState] ?? "closed";
 	}
 
 	welcomed(): boolean {
@@ -487,6 +506,12 @@ export class RpcPeer<
 	handleMessage(ev: MessageEvent): Success {
 		try {
 			const json = JSON.parse(ev.data);
+
+			// Check if this is a stream message
+			if (this.streamManager.isStreamMessage(json)) {
+				return this.streamManager.handleStreamMessage(json);
+			}
+
 			const parsed = RpcMessageSchema.safeParse(json);
 
 			if (!parsed.success) {
@@ -620,7 +645,13 @@ export class RpcPeer<
 
 		this.pendingPromises.set(requestId, { resolve, reject, timer });
 
-		this.retrySocket.send(JSON.stringify(message));
+		try {
+			this.retrySocket.send(JSON.stringify(message));
+		} catch (err) {
+			global.clearTimeout(timer);
+			this.pendingPromises.delete(requestId);
+			reject(err);
+		}
 		return promise;
 	}
 
@@ -661,5 +692,53 @@ export class RpcPeer<
 				console.error("[Peer] Match handler error", err);
 			}
 		});
+	}
+
+	/**
+	 * Sends an AsyncIterable as a stream over the WebSocket connection.
+	 * Handles backpressure and resource cleanup automatically.
+	 * @template T - The type of items in the iterable
+	 * @param iterable - AsyncIterable to stream
+	 * @param streamId - Optional custom stream ID
+	 * @returns Promise that resolves with the stream ID when complete
+	 */
+	async sendStream<T>(
+		iterable: AsyncIterable<T>,
+		streamId?: string,
+	): Promise<string> {
+		return this.streamManager.sendStream(
+			{
+				send: (data: string) => this.retrySocket.send(data),
+				bufferedAmount: this.retrySocket.bufferedAmount,
+			},
+			iterable,
+			streamId,
+		);
+	}
+
+	/**
+	 * Creates a ReadableStream that will receive data from a remote stream.
+	 * @template T - The type of items in the stream
+	 * @param streamId - Optional stream ID (auto-generated if not provided)
+	 * @returns Tuple of [streamId, ReadableStream]
+	 */
+	receiveStream<T = unknown>(streamId?: string): [string, ReadableStream<T>] {
+		return this.streamManager.createReceivingStream<T>(streamId);
+	}
+
+	/**
+	 * Aborts an active outgoing stream.
+	 * @param streamId - ID of the stream to abort
+	 */
+	abortStream(streamId: string): void {
+		this.streamManager.abort(streamId);
+	}
+
+	/**
+	 * Closes a receiving stream.
+	 * @param streamId - ID of the stream to close
+	 */
+	closeReceivingStream(streamId: string): void {
+		this.streamManager.closeReceivingStream(streamId);
 	}
 }

@@ -44,6 +44,14 @@ export interface RetrySocketFromOptions<TUrl extends string = string> {
 }
 
 export type RetrySocketEventName = "message" | "open" | "close" | "error";
+/**
+ * 0, 1, 2, 3 are used for readyState to match WebSocket constants for easier integration with existing code and debugging.
+ */
+export type WebSocketReadyStateValue =
+	| typeof WebSocket.CONNECTING
+	| typeof WebSocket.OPEN
+	| typeof WebSocket.CLOSING
+	| typeof WebSocket.CLOSED;
 
 export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	public static readonly CONNECTING: 0 = 0;
@@ -383,8 +391,10 @@ export class RetrySocket<TUrl extends string = string> implements WebSocket {
 	}
 
 	// Getters for proxying properties if needed
-	public get readyState() {
-		return this.socket ? this.socket.readyState : WebSocket.CLOSED;
+	public get readyState(): WebSocketReadyStateValue {
+		return this.socket
+			? (this.socket.readyState as WebSocketReadyStateValue)
+			: WebSocket.CLOSED;
 	}
 
 	public get binaryType(): BinaryType {

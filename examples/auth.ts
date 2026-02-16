@@ -6,12 +6,12 @@
  */
 
 import { z } from "zod";
-import { serve } from "./serve.ts";
+import { serve } from "../serve.ts";
 import {
 	SimpleAuthValidator,
 	StrictAuthorizationRules,
-} from "./shared/Auth.ts";
-import { RpcPeer, type RpcWelcome } from "./shared/RpcPeer.ts";
+} from "../shared/Auth.ts";
+import { RpcPeer } from "../shared/RpcPeer.ts";
 
 // 1. Set up authentication validator with some test tokens
 const authValidator = new SimpleAuthValidator();

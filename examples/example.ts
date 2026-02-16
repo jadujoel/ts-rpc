@@ -1,9 +1,9 @@
-import { serve } from "./serve.ts";
-import { RpcPeer } from "./shared/RpcPeer.ts";
+import { serve } from "../serve.ts";
+import { RpcPeer } from "../shared/RpcPeer.ts";
 import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
-} from "./shared/SchemaExample";
+} from "../shared/SchemaExample";
 
 export async function example() {
 	const server = serve({
@@ -54,9 +54,12 @@ export async function example() {
 	);
 
 	console.log("Sending Score request...");
-	const score = await peer1.call({
-		type: "score",
-	}, peer2.clientId);
+	const score = await peer1.call(
+		{
+			type: "score",
+		},
+		peer2.clientId,
+	);
 
 	console.log("Score:", score.data);
 
@@ -73,10 +76,7 @@ export async function example() {
 
 	console.log("Greeting:", greeting.data);
 
-	await Promise.all([
-		peer1.dispose(),
-		peer2.dispose(),
-	]);
+	await Promise.all([peer1.dispose(), peer2.dispose()]);
 	console.log("Stopping server...");
 
 	// using true to force close works.
