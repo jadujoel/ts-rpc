@@ -37,6 +37,11 @@ const RequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("hello"),
 		name: z.string(),
 	}),
+	z.object({
+		type: z.literal("incoming-message"),
+		from: z.string(),
+		message: z.string(),
+	}),
 ]);
 
 const ResponseSchema = z.discriminatedUnion("type", [
@@ -48,20 +53,13 @@ const ResponseSchema = z.discriminatedUnion("type", [
 		type: z.literal("peers"),
 		peerIds: z.array(z.string()),
 	}),
-	z.object({
-		type: z.literal("incoming-message"),
-		from: z.string(),
-		message: z.string(),
-	}),
 ]);
-
-type Request = z.infer<typeof RequestSchema>;
-type Response = z.infer<typeof ResponseSchema>;
 
 export async function peerToPeerExample() {
 	console.log("=== Peer-to-Peer Messaging Example ===\n");
 
 	console.debug = () => {}; // Disable debug logs
+	console.time = () => {}; // Disable time logs
 
 	const server = serve({
 		hostname: "127.0.0.1",

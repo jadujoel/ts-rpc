@@ -13,10 +13,8 @@ import { z } from "zod";
 import { serve } from "../serve.ts";
 import {
 	type AuthContext,
-	type AuthToken,
 	type AuthValidator,
 	NoAuthValidator,
-	RateLimiter,
 	SimpleAuthValidator,
 	StrictAuthorizationRules,
 } from "../shared/Authorization.ts";
@@ -57,9 +55,6 @@ const ResponseSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
-type Request = z.infer<typeof RequestSchema>;
-type Response = z.infer<typeof ResponseSchema>;
-
 /**
  * Custom JWT-style token validator
  */
@@ -72,15 +67,28 @@ class JwtStyleAuthValidator implements AuthValidator {
 		>,
 	) {}
 
-	async validate(token: AuthToken): Promise<AuthContext | null> {
+	async validate(
+		token: string | null,
+		_httpRequest: globalThis.Request,
+	): Promise<AuthContext | null> {
+		if (!token) {
+			console.log("  [Auth] No token provided");
+			return null;
+		}
+
 		// Simple token format: "jwt.{userId}.{signature}"
-		const parts = token.token.split(".");
+		const parts = token.split(".");
 		if (parts.length !== 3 || parts[0] !== "jwt") {
 			console.log("  [Auth] Invalid token format");
 			return null;
 		}
 
 		const userId = parts[1];
+		if (!userId) {
+			console.log("  [Auth] Missing userId in token");
+			return null;
+		}
+
 		const signature = parts[2];
 
 		// Verify signature (very simplified)
@@ -102,7 +110,7 @@ class JwtStyleAuthValidator implements AuthValidator {
 
 		return {
 			userId: userData.userId,
-			sessionId: token.sessionId,
+			sessionId: undefined,
 			permissions: new Set(userData.permissions),
 			connectedAt: new Date(),
 			lastActivityAt: new Date(),
@@ -157,8 +165,8 @@ export async function authScenariosExample() {
 	console.log("\n--- Scenario 2: SimpleAuthValidator (Token Auth) ---");
 
 	const authValidator = SimpleAuthValidator.FromTokens({
-		"user-token-123": { userId: "user-1", role: "user" },
-		"admin-token-456": { userId: "admin-1", role: "admin" },
+		"user-token-123": "user-1",
+		"admin-token-456": "admin-1",
 	});
 
 	const authServer = serve({
@@ -214,7 +222,7 @@ export async function authScenariosExample() {
 
 		console.log("⚠ Connection was not immediately rejected");
 		await invalidPeer.dispose();
-	} catch (error) {
+	} catch {
 		console.log(`✓ Connection rejected with invalid token`);
 	}
 
@@ -406,7 +414,7 @@ export async function authScenariosExample() {
 		await delay(500);
 		console.log("⚠ Eve's connection was not immediately rejected");
 		await evePeer.dispose();
-	} catch (error) {
+	} catch {
 		console.log("✓ Eve's connection rejected (invalid signature)\n");
 	}
 

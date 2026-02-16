@@ -46,9 +46,6 @@ const ResponseSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
-type Request = z.infer<typeof RequestSchema>;
-type Response = z.infer<typeof ResponseSchema>;
-
 export async function streamBackpressureExample() {
 	console.log("=== RpcStream Advanced Features Example ===\n");
 
@@ -90,7 +87,7 @@ export async function streamBackpressureExample() {
 					}
 				}
 
-				const streamId = await serverPeer.sendStreamAsyncIterable(fastStream());
+				const streamId = await serverPeer.sendStream(fastStream());
 				return {
 					type: "stream" as const,
 					streamId,
@@ -134,9 +131,7 @@ export async function streamBackpressureExample() {
 					);
 				}
 
-				const streamId = await serverPeer.sendStreamAsyncIterable(
-					largeDataStream(),
-				);
+				const streamId = await serverPeer.sendStream(largeDataStream());
 				return {
 					type: "stream" as const,
 					streamId,
@@ -153,9 +148,7 @@ export async function streamBackpressureExample() {
 					}
 				}
 
-				const streamId = await serverPeer.sendStreamAsyncIterable(
-					serverResponse(),
-				);
+				const streamId = await serverPeer.sendStream(serverResponse());
 
 				return {
 					type: "stream" as const,
@@ -252,7 +245,9 @@ export async function streamBackpressureExample() {
 	});
 
 	if (largeDataResponse.data.type === "stream") {
-		const stream = clientPeer.receiveStream<ArrayBuffer>(largeDataResponse.data.streamId);
+		const stream = clientPeer.receiveStream<ArrayBuffer>(
+			largeDataResponse.data.streamId,
+		);
 		if (stream) {
 			const reader = stream[1].getReader();
 			let chunkCount = 0;
@@ -300,9 +295,7 @@ export async function streamBackpressureExample() {
 		console.log("  [Client] Stream sending complete");
 	}
 
-	const clientStreamId = await clientPeer.sendStreamAsyncIterable(
-		clientStream(),
-	);
+	const clientStreamId = await clientPeer.sendStream(clientStream());
 
 	// Request server to send stream back
 	const bidirectionalResponse = await clientPeer.call({
@@ -344,7 +337,9 @@ export async function streamBackpressureExample() {
 	});
 
 	if (abortResponse.data.type === "stream") {
-		const stream = clientPeer.receiveStream<ArrayBuffer>(abortResponse.data.streamId);
+		const stream = clientPeer.receiveStream<ArrayBuffer>(
+			abortResponse.data.streamId,
+		);
 		if (stream) {
 			const reader = stream[1].getReader();
 			let itemCount = 0;

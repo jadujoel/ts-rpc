@@ -50,9 +50,6 @@ const ResponseSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
-type Request = z.infer<typeof RequestSchema>;
-type Response = z.infer<typeof ResponseSchema>;
-
 export async function rateLimitingExample() {
 	console.log("=== Rate Limiting Example ===\n");
 
@@ -102,8 +99,6 @@ export async function rateLimitingExample() {
 	// Part 2: Different rate limits per user type
 	console.log("\n\n--- Part 2: Different Limits Per User Type ---\n");
 
-	const multiLimiter = new RateLimiter(10, 10); // 10/sec default
-
 	// Simulate different user types
 	const userTypes = [
 		{ id: "guest", rate: 1, label: "Guest (1/sec)" },
@@ -131,17 +126,15 @@ export async function rateLimitingExample() {
 
 	console.log("Rate limits per user type:");
 	console.log(`  Unauthenticated: ${authRules.getRateLimit(undefined)} msg/s`);
-	console.log(
-		`  Regular User: ${authRules.getRateLimit("user-1" as any)} msg/s`,
-	);
-	console.log(`  Admin: ${authRules.getRateLimit("admin-1" as any)} msg/s\n`);
+	console.log(`  Regular User: ${authRules.getRateLimit("user-1")} msg/s`);
+	console.log(`  Admin: ${authRules.getRateLimit("admin-1")} msg/s\n`);
 
 	// Part 4: Real server with rate limiting
 	console.log("--- Part 4: Server with Rate Limiting ---\n");
 
 	const authValidator = SimpleAuthValidator.FromTokens({
-		"admin-token": { userId: "admin-1", role: "admin" },
-		"user-token": { userId: "user-1", role: "user" },
+		"admin-token": "admin-1",
+		"user-token": "user-1",
 	});
 
 	const server = serve({
@@ -199,7 +192,7 @@ export async function rateLimitingExample() {
 			if (i % 5 === 0) {
 				console.log(`  Completed ${i} requests...`);
 			}
-		} catch (error) {
+		} catch {
 			adminFailed++;
 			console.log(`  Request ${i}: Rate limited`);
 		}

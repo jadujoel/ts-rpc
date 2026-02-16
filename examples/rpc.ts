@@ -3,7 +3,7 @@ import { RpcPeer } from "../shared/RpcPeer.ts";
 import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
-} from "../shared/SchemaExample";
+} from "../shared/SchemaExample.ts";
 
 export async function example() {
 	console.debug = () => {}; // Disable debug logs for cleaner output
