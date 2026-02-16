@@ -123,6 +123,15 @@ export interface ReceivingStreamState<TStream = unknown> {
 }
 
 /**
+ * Internal structure for buffering messages that arrive before receiveStream() is called
+ */
+export interface PendingStreamBuffer {
+	readonly messages: StreamMessage[];
+	readonly timestamp: number;
+	readonly timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
+/**
  * Interface for WebSocket-like objects that can send data and track buffer amount.
  * Used for abstraction to allow testing and custom transport implementations.
  * @template TData - The data type that can be sent (typically string)
@@ -147,10 +156,13 @@ export class StreamManager {
 			string,
 			ReceivingStreamState<unknown>
 		>(),
+		private readonly pendingStreams = new Map<string, PendingStreamBuffer>(),
 	) {}
 
 	static DefaultMaxBufferedAmount = 1_048_576 as const; // 1MB
 	static DefaultBackpressureDelay = 10 as const; // 10ms
+	static DefaultPendingStreamTimeout = 10_000 as const; // 10 seconds
+	static DefaultPendingStreamMaxMessages = 100 as const; // Maximum buffered messages per stream
 	static ErrorMessages = {
 		StreamAborted: "Stream aborted",
 		StreamAbortedDuringBackpressure: "Stream aborted during backpressure wait",
@@ -323,6 +335,49 @@ export class StreamManager {
 
 		const stream = new ReadableStream<T>({
 			start: (controller) => {
+				// Check if there are pending messages that arrived before this stream was registered
+				const pending = this.pendingStreams.get(id);
+				if (pending) {
+					// Clear timeout and remove from pending immediately
+					global.clearTimeout(pending.timeoutHandle);
+					this.pendingStreams.delete(id);
+
+					// Flush all buffered messages to the controller
+					// Note: We need to handle close/error messages specially to ensure
+					// all data is enqueued before the stream is closed/errored
+					let shouldClose = false;
+					let errorMessage: string | undefined;
+
+					for (const message of pending.messages) {
+						switch (message.type) {
+							case StreamManager.MessageType.StreamData:
+								controller.enqueue(message.payload as T);
+								break;
+							case StreamManager.MessageType.StreamEnd:
+								shouldClose = true;
+								break;
+							case StreamManager.MessageType.StreamError:
+								errorMessage = message.error;
+								break;
+						}
+					}
+
+					// After enqueueing all data, handle close/error
+					// Use queueMicrotask to ensure this happens after start callback completes
+					if (errorMessage !== undefined) {
+						global.queueMicrotask(() => {
+							controller.error(new Error(errorMessage));
+						});
+						return; // Don't register the stream
+					}
+					if (shouldClose) {
+						global.queueMicrotask(() => {
+							controller.close();
+						});
+						return; // Don't register the stream
+					}
+				}
+
 				this.receivingStreams.set(id, {
 					controller: controller as ReadableStreamDefaultController<unknown>,
 					stream: streamInstance as ReadableStream<unknown>,
@@ -353,10 +408,42 @@ export class StreamManager {
 
 		const streamState = this.receivingStreams.get(message.streamId);
 		if (!streamState) {
-			console.warn(
-				`[StreamManager] Received message for unknown stream: ${message.streamId}`,
-			);
-			return false;
+			// Stream not registered yet - buffer the message
+			let pending = this.pendingStreams.get(message.streamId);
+
+			if (!pending) {
+				// Create new pending buffer with timeout
+				const timeoutHandle = global.setTimeout(() => {
+					const p = this.pendingStreams.get(message.streamId);
+					if (p) {
+						console.warn(
+							`[StreamManager] Pending stream timed out after ${StreamManager.DefaultPendingStreamTimeout}ms: ${message.streamId}`,
+						);
+						this.pendingStreams.delete(message.streamId);
+					}
+				}, StreamManager.DefaultPendingStreamTimeout);
+
+				pending = {
+					messages: [],
+					timestamp: Date.now(),
+					timeoutHandle,
+				};
+				this.pendingStreams.set(message.streamId, pending);
+			}
+
+			// Add message to buffer with size limit
+			if (
+				pending.messages.length >= StreamManager.DefaultPendingStreamMaxMessages
+			) {
+				// Drop oldest message if buffer is full
+				pending.messages.shift();
+				console.warn(
+					`[StreamManager] Pending stream buffer full, dropping oldest message for stream: ${message.streamId}`,
+				);
+			}
+			pending.messages.push(message);
+
+			return true;
 		}
 
 		const { controller } = streamState;
@@ -458,6 +545,12 @@ export class StreamManager {
 			}
 		}
 		this.receivingStreams.clear();
+
+		// Clear all pending stream buffers and their timeouts
+		for (const pending of this.pendingStreams.values()) {
+			global.clearTimeout(pending.timeoutHandle);
+		}
+		this.pendingStreams.clear();
 	}
 
 	/**

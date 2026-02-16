@@ -81,8 +81,6 @@ export async function streamBackpressureExample() {
 				const count = data.count;
 				// Create fast stream
 				async function* fastStream() {
-					// Small delay to give client time to setup receiver
-					await delay(100);
 					for (let i = 1; i <= count; i++) {
 						yield { index: i, timestamp: Date.now() };
 						await delay(50); // Fast: 20 items/sec
@@ -170,46 +168,52 @@ export async function streamBackpressureExample() {
 	console.log("--- Scenario 1: Multiple Concurrent Streams ---");
 	console.log("Starting 3 streams simultaneously...\n");
 
-	// Request and setup each stream individually to avoid race condition
-	const setupStream = async (count: number, streamName: string) => {
-		const response = await clientPeer.call({
-			type: "fast-stream",
-			count,
-		});
+	// Request multiple streams concurrently - no race condition!
+	const streamPromises = [
+		clientPeer.call({ type: "fast-stream", count: 5 }),
+		clientPeer.call({ type: "fast-stream", count: 5 }),
+		clientPeer.call({ type: "fast-stream", count: 5 }),
+	];
 
+	const responses = await Promise.all(streamPromises);
+
+	// Setup receivers for all streams
+	const streamReaders = responses.map((response, index) => {
 		if (response.data.type !== "stream") {
-			console.log(`  [${streamName}] Failed to get stream`);
+			console.log(`  [Stream${index + 1}] Failed to get stream`);
 			return null;
 		}
 
-		// Setup receiver immediately after getting response
-		const [, stream] = clientPeer.receiveStream<ArrayBuffer>(
-			response.data.streamId,
-		);
-		return { streamName, reader: stream.getReader() };
-	};
+		const [, stream] = clientPeer.receiveStream<{
+			index: number;
+			timestamp: number;
+		}>(response.data.streamId);
+		return {
+			streamName: `Stream${index + 1}`,
+			reader: stream.getReader(),
+		};
+	});
 
-	// Start all three requests simultaneously
-	const streamSetups = await Promise.all([
-		setupStream(5, "Stream1"),
-		setupStream(5, "Stream2"),
-		setupStream(5, "Stream3"),
-	]);
-
-	// Filter out nulls and consume streams
-	const validStreams = streamSetups.filter(
+	// Filter out nulls
+	const validStreams = streamReaders.filter(
 		(
 			s,
 		): s is {
 			streamName: string;
-			reader: ReadableStreamDefaultReader<ArrayBuffer>;
+			reader: ReadableStreamDefaultReader<{
+				index: number;
+				timestamp: number;
+			}>;
 		} => s !== null,
 	);
 
 	console.log("Consuming 3 streams concurrently:");
 
 	const consumeStream = async (
-		reader: ReadableStreamDefaultReader<ArrayBuffer>,
+		reader: ReadableStreamDefaultReader<{
+			index: number;
+			timestamp: number;
+		}>,
 		streamName: string,
 	): Promise<void> => {
 		let count = 0;
@@ -220,8 +224,7 @@ export async function streamBackpressureExample() {
 				if (done) break;
 
 				count++;
-				const data = JSON.parse(new TextDecoder().decode(value));
-				console.log(`  [${streamName}] Item ${count}: index=${data.index}`);
+				console.log(`  [${streamName}] Item ${count}: index=${value.index}`);
 			}
 			console.log(`  [${streamName}] Complete (${count} items)\n`);
 		} finally {
@@ -248,9 +251,12 @@ export async function streamBackpressureExample() {
 	});
 
 	if (largeDataResponse.data.type === "stream") {
-		const stream = clientPeer.receiveStream<ArrayBuffer>(
-			largeDataResponse.data.streamId,
-		);
+		const stream = clientPeer.receiveStream<{
+			chunkIndex: number;
+			totalChunks: number;
+			data: string;
+			totalBytesSent: number;
+		}>(largeDataResponse.data.streamId);
 		if (stream) {
 			const reader = stream[1].getReader();
 			let chunkCount = 0;
@@ -264,11 +270,10 @@ export async function streamBackpressureExample() {
 					if (done) break;
 
 					chunkCount++;
-					totalBytesReceived += value.byteLength;
+					totalBytesReceived += value.data.length;
 
-					const data = JSON.parse(new TextDecoder().decode(value));
 					console.log(
-						`  [Client] Chunk ${data.chunkIndex}/${data.totalChunks} received (${(totalBytesReceived / 1024).toFixed(0)}KB total)`,
+						`  [Client] Chunk ${value.chunkIndex}/${value.totalChunks} received (${(totalBytesReceived / 1024).toFixed(0)}KB total)`,
 					);
 
 					// Slow consumer - introduces backpressure
@@ -308,9 +313,10 @@ export async function streamBackpressureExample() {
 
 	if (bidirectionalResponse.data.type === "stream") {
 		// Consume server's response stream
-		const serverStream = clientPeer.receiveStream<ArrayBuffer>(
-			bidirectionalResponse.data.streamId,
-		)[1];
+		const serverStream = clientPeer.receiveStream<{
+			serverMessage: string;
+			timestamp: number;
+		}>(bidirectionalResponse.data.streamId)[1];
 		if (serverStream) {
 			const reader = serverStream.getReader();
 
@@ -321,8 +327,7 @@ export async function streamBackpressureExample() {
 					const { done, value } = await reader.read();
 					if (done) break;
 
-					const data = JSON.parse(new TextDecoder().decode(value));
-					console.log(`  [Client] ← ${data.serverMessage}`);
+					console.log(`  [Client] ← ${value.serverMessage}`);
 				}
 			} finally {
 				reader.releaseLock();

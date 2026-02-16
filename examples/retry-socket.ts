@@ -33,7 +33,7 @@ export async function retrySocketExample() {
 		reconnectInterval: 1000, // Start with 1 second
 		maxReconnectInterval: 8000, // Max 8 seconds between retries
 		binaryType: "arraybuffer",
-		onopen: (event) => {
+		onopen: (_event) => {
 			console.log(`[${new Date().toISOString()}] ✓ Connected`);
 		},
 		onmessage: (event) => {
@@ -44,7 +44,7 @@ export async function retrySocketExample() {
 				`[${new Date().toISOString()}] ✗ Connection closed (code: ${event.code}, reason: ${event.reason || "none"})`,
 			);
 		},
-		onerror: (event) => {
+		onerror: (_event) => {
 			console.log(`[${new Date().toISOString()}] ⚠ Error occurred`);
 		},
 	});
