@@ -295,7 +295,7 @@ async function runServer() {
 					console.error("[Server] Error handling message:", err);
 				}
 			},
-			close(ws) {
+			close(_ws) {
 				console.log("[Server] Client disconnected");
 			},
 		},

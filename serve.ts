@@ -8,7 +8,7 @@ import {
 	DefaultAuthorizationRules,
 	NoAuthValidator,
 	RateLimiter,
-} from "./shared/Auth.ts";
+} from "./shared/Authorization.ts";
 import home from "./src/index.html";
 
 export interface ServeOptions {

@@ -87,6 +87,14 @@ export class DefaultAuthorizationRules<
 	}
 }
 
+export interface StrictAuthorizationRulesOptions<
+	TUserId extends string = string,
+	TTopic extends string = string,
+> {
+	readonly adminUsers?: readonly TUserId[] | Set<TUserId>;
+	readonly topicPermissions?: Map<TTopic, Set<TUserId>>;
+}
+
 /**
  * Example strict authorization rules
  */
@@ -97,21 +105,46 @@ export class StrictAuthorizationRules<
 > implements AuthorizationRules<TUserId, TTopic, TToClientId>
 {
 	constructor(
-		private readonly admins: Set<TUserId>,
+		private readonly admins: Set<TUserId> = new Set(),
 		private readonly topicPermissions: Map<TTopic, Set<TUserId>> = new Map(),
-	) {
-		this.admins = new Set(admins);
+	) {}
+
+	/**
+	 * Admin users: 1000 msg/s
+	 * Regular users: 50 msg/s
+	 * Unauthenticated: 10 msg/s
+	 */
+	static RateLimits = {
+		Unauthenticated: 10,
+		User: 50,
+		Admin: 1000,
+	} as const;
+
+	static FromOptions<
+		const TUserId extends string = string,
+		const TTopic extends string = string,
+		const TToClientId extends string = string,
+	>(
+		options: StrictAuthorizationRulesOptions<TUserId, TTopic>,
+	): StrictAuthorizationRules<TUserId, TTopic, TToClientId> {
+		const admins =
+			options.adminUsers instanceof Set
+				? options.adminUsers
+				: new Set(options.adminUsers);
+		const topicPermissions = options.topicPermissions || new Map();
+		return new StrictAuthorizationRules(admins, topicPermissions);
 	}
 
 	static FromAdmins<
-		TUserId extends string,
-		TTopic extends string,
-		TToClientId extends string,
+		const TUserId extends string = string,
+		const TTopic extends string = string,
+		const TToClientId extends string = string,
 	>(
 		adminUsers: readonly TUserId[],
 	): StrictAuthorizationRules<TUserId, TTopic, TToClientId> {
-		const set = new Set(adminUsers);
-		return new StrictAuthorizationRules(set, new Map());
+		return StrictAuthorizationRules.FromOptions({
+			adminUsers: new Set(adminUsers),
+		});
 	}
 
 	canSubscribeToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
@@ -135,9 +168,15 @@ export class StrictAuthorizationRules<
 	}
 
 	getRateLimit(userId: TUserId | undefined): number {
-		if (!userId) return 10; // Unauthenticated: 10 msg/s
-		if (this.admins.has(userId)) return 1000; // Admins: 1000 msg/s
-		return 50; // Regular users: 50 msg/s
+		// Unauthenticated: 10 msg/s
+		if (!userId) {
+			return StrictAuthorizationRules.RateLimits.Unauthenticated;
+		}
+		// Admins: 1000 msg/s
+		if (this.admins.has(userId)) {
+			return StrictAuthorizationRules.RateLimits.Admin;
+		}
+		return StrictAuthorizationRules.RateLimits.User;
 	}
 }
 

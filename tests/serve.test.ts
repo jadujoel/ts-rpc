@@ -125,7 +125,7 @@ describe("Message Routing Logic", () => {
 	});
 
 	test("broadcasts when 'to' field is missing", () => {
-		const message = {
+		const _message = {
 			category: "request",
 			requestId: "req-456",
 			from: "client-1",

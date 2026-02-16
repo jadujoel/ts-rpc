@@ -10,7 +10,7 @@ import { serve } from "../serve.ts";
 import {
 	SimpleAuthValidator,
 	StrictAuthorizationRules,
-} from "../shared/Auth.ts";
+} from "../shared/Authorization.ts";
 import { RpcPeer } from "../shared/RpcPeer.ts";
 
 // 1. Set up authentication validator with some test tokens
