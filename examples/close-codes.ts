@@ -9,7 +9,6 @@
  * 5. Distinguishing between graceful shutdown and error scenarios
  */
 
-import { serve } from "../serve.ts";
 import {
 	canReconnect,
 	getCloseCodeDescription,
@@ -24,6 +23,7 @@ import {
 	WS_CLOSE_SERVICE_RESTART,
 	WS_CLOSE_TRY_AGAIN_LATER,
 } from "../shared/WebSocketCloseCodes.ts";
+import { serve } from "./serve.ts";
 
 async function delay(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));

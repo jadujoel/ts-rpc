@@ -1,6 +1,6 @@
 import * as util from "node:util";
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
-import * as api from "./api";
+import * as api from "../api/index.ts";
 import {
 	type AuthContext,
 	type AuthorizationRules,
@@ -8,7 +8,7 @@ import {
 	DefaultAuthorizationRules,
 	NoAuthValidator,
 	RateLimiter,
-} from "./shared/Authorization.ts";
+} from "../shared/Authorization.ts";
 import home from "./src/index.html";
 
 /**

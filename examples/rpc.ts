@@ -1,9 +1,9 @@
-import { serve } from "../serve.ts";
 import { RpcPeer } from "../shared/RpcPeer.ts";
 import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
-} from "../shared/SchemaExample.ts";
+} from "./SchemaExample.ts";
+import { serve } from "./serve.ts";
 
 export async function example() {
 	console.debug = () => {}; // Disable debug logs for cleaner output

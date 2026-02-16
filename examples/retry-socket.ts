@@ -9,8 +9,8 @@
  * 5. Visualization of reconnection behavior
  */
 
-import { serve } from "../serve.ts";
 import { RetrySocket } from "../shared/RetrySocket.ts";
+import { serve } from "./serve.ts";
 
 async function delay(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));

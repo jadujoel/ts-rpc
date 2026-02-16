@@ -2,7 +2,7 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: test file */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server } from "bun";
-import { serve } from "../serve";
+import { serve } from "../examples/serve";
 import { RpcPeer } from "../shared/RpcPeer";
 import {
 	RequestApiSchemaExample,
@@ -216,7 +216,11 @@ describe("Integration Tests", () => {
 			ids.add(client2.clientId!);
 			ids.add(client3.clientId!);
 			expect(ids.size).toBe(3); // All IDs should be unique
-			await Promise.all([client1.dispose(), client2.dispose(), client3.dispose()]);
+			await Promise.all([
+				client1.dispose(),
+				client2.dispose(),
+				client3.dispose(),
+			]);
 		});
 	});
 

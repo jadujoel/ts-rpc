@@ -25,12 +25,12 @@
  */
 
 import { z } from "zod";
-import { serve } from "../serve.ts";
 import {
 	SimpleAuthValidator,
 	StrictAuthorizationRules,
 } from "../shared/Authorization.ts";
 import { RpcPeer } from "../shared/RpcPeer.ts";
+import { serve } from "./serve.ts";
 
 console.debug = () => {};
 

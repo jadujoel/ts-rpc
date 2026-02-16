@@ -1,8 +1,8 @@
-import { RpcPeer } from "./shared/RpcPeer";
+import { RpcPeer } from "../shared/RpcPeer.ts";
 import {
 	RequestApiSchemaExample,
 	ResponseApiSchemaExample,
-} from "./shared/SchemaExample";
+} from "./SchemaExample.ts";
 
 const rpc = RpcPeer.FromOptions({
 	url: "ws://127.0.0.1:8080",

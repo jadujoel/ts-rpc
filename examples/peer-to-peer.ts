@@ -10,8 +10,8 @@
  */
 
 import { z } from "zod";
-import { serve } from "../serve.ts";
 import { RpcPeer } from "../shared/RpcPeer.ts";
+import { serve } from "./serve.ts";
 
 async function delay(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
