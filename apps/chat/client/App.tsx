@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type z from "zod";
-import type { MatchHandler } from "../../../lib.ts";
 import type { Message } from "../../shared/types.ts";
 import { useRpcPeer } from "../../shared/useRpcPeer.ts";
 import { ChatRequestSchema, ChatResponseSchema } from "../shared/schema.ts";
@@ -24,7 +23,7 @@ export function ChatApp() {
 	// Auto-scroll to bottom when new messages arrive
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-	}, [messages]);
+	}, []);
 
 	// Set up message listener
 	useEffect(() => {
@@ -33,7 +32,7 @@ export function ChatApp() {
 		}
 
 		type ChatResponse = z.infer<typeof ChatResponseSchema>;
-		const handler: MatchHandler<ChatResponse> = (data) => {
+		peer.onNotification((data: ChatResponse) => {
 			switch (data.type) {
 				case "message": {
 					setMessages((prev) => [
@@ -114,15 +113,10 @@ export function ChatApp() {
 					break;
 				}
 				default:
-					console.warn("Unknown response type:", data);
+					console.warn("Unknown notification type:", data);
 					break;
 			}
-
-			// Return null to indicate no response needed
-			return null;
-		};
-
-		peer.match(handler);
+		});
 	}, [peer]);
 
 	const handleJoin = async () => {
@@ -133,7 +127,7 @@ export function ChatApp() {
 			if (connectionState !== "connected") {
 				await connect();
 				// Wait for React to update the peer reference
-				await new Promise(resolve => setTimeout(resolve, 100));
+				await new Promise((resolve) => setTimeout(resolve, 100));
 			}
 
 			if (peer) {

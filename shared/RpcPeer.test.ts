@@ -271,17 +271,18 @@ describe("RpcPeer", () => {
 
 	test("handleMessage validates request data with schema", () => {
 		const strictSchema = z.object({ type: z.literal("valid") });
+		const strictResponseSchema = z.object({ type: z.literal("response") });
 		const peer = RpcPeer.FromOptions({
 			url: "ws://localhost:8080",
 			requestSchema: strictSchema,
-			responseSchema: z.any(),
+			responseSchema: strictResponseSchema,
 		});
 
 		const consoleDebugMock = mock(() => {});
 		const originalDebug = console.debug;
 		console.debug = consoleDebugMock;
 
-		// Invalid request
+		// Invalid request (matches neither request nor response schema)
 		const invalidEvent = new MessageEvent("message", {
 			data: JSON.stringify({
 				category: "request",

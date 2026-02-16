@@ -276,6 +276,7 @@ export type RpcPeerEventMap = {
 	readonly error: Event;
 	readonly welcome: CustomEvent<RpcWelcome>;
 	readonly request: CustomEvent<RpcRequest>;
+	readonly notification: CustomEvent<RpcRequest>;
 	readonly response: CustomEvent<RpcResponse>;
 };
 
@@ -400,6 +401,20 @@ export class RpcPeer<
 		detail: TRpcRequest,
 	): CustomEvent<TRpcRequest> {
 		return new CustomEvent("request", { detail });
+	}
+
+	/**
+	 * Creates a notification event with the given detail.
+	 * Notifications are incoming request-category messages whose data
+	 * matches the response schema rather than the request schema.
+	 * @template TRpcRequest - The request type
+	 * @param detail - The notification data
+	 * @returns Custom event containing the notification
+	 */
+	public static NotificationEvent<const TRpcRequest extends RpcRequest>(
+		detail: TRpcRequest,
+	): CustomEvent<TRpcRequest> {
+		return new CustomEvent("notification", { detail });
 	}
 
 	/**
@@ -808,12 +823,27 @@ export class RpcPeer<
 				// Validation of data payload if schema provided
 				if (this.requestSchema !== undefined) {
 					const valid = this.requestSchema.safeParse(message.data);
-					if (!valid.success) {
-						console.debug("[Peer] Invalid request data:", valid.error);
-						return false;
+					if (valid.success) {
+						this.dispatchEvent(RpcPeer.RequestEvent(message));
+						return true;
+					}
+				} else {
+					// No request schema — dispatch as request
+					this.dispatchEvent(RpcPeer.RequestEvent(message));
+					return true;
+				}
+
+				// Request schema validation failed — try response schema as notification
+				if (this.responseSchema !== undefined) {
+					const valid = this.responseSchema.safeParse(message.data);
+					if (valid.success) {
+						this.dispatchEvent(RpcPeer.NotificationEvent(message));
+						return true;
 					}
 				}
-				this.dispatchEvent(RpcPeer.RequestEvent(message));
+
+				console.debug("[Peer] Invalid request data — no matching schema");
+				return false;
 			} else if (message.category === "response") {
 				const pending = this.pendingPromises.get(message.requestId);
 				if (pending) {
@@ -1010,6 +1040,36 @@ export class RpcPeer<
 				}
 			} catch (err) {
 				console.error("[Peer] Match handler error", err);
+			}
+		});
+	}
+
+	/**
+	 * Registers a handler for server-initiated notification messages.
+	 * Notifications are incoming request-category messages whose data
+	 * matches the response schema rather than the request schema.
+	 *
+	 * Unlike match(), the handler does not return a response.
+	 *
+	 * @param handler - Function that processes notification data
+	 *
+	 * @example
+	 * ```typescript
+	 * peer.onNotification((data, from) => {
+	 *   console.log(`Notification from ${from}:`, data);
+	 * });
+	 * ```
+	 */
+	onNotification(
+		handler: (data: TResponseApi, from?: string) => void | Promise<void>,
+	): void {
+		this.addEventListener("notification", async (ev: Event) => {
+			const customEv = ev as CustomEvent<RpcRequest<TResponseApi>>;
+			const req = customEv.detail;
+			try {
+				await handler(req.data, req.from);
+			} catch (err) {
+				console.error("[Peer] Notification handler error", err);
 			}
 		});
 	}
