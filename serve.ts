@@ -54,8 +54,8 @@ const clients = new Map<string, ServerWebSocket<WebSocketData>>();
 // Map to track sessions for reconnection (sessionId -> clientId)
 const sessions = new Map<string, string>();
 
-// Rate limiter instance
-let rateLimiter: RateLimiter;
+// Rate limiter instances per user (userId -> RateLimiter)
+const rateLimiters = new Map<string, RateLimiter>();
 
 let Logger = console;
 const debug = (...args: unknown[]) => Logger.debug("[Server]", ...args);
@@ -70,14 +70,13 @@ export function serve({
 	development = false,
 	hot = false,
 	logger = console,
-	authValidator = new NoAuthValidator(),
+	authValidator = NoAuthValidator.Default(),
 	authRules = new DefaultAuthorizationRules(),
 	enableRateLimit = true,
 	maxMessageSize = 1024 * 1024, // 1MB default
 	enableSessionPersistence = true,
 }: ServeOptions = {}): Server {
 	Logger = logger;
-	rateLimiter = new RateLimiter();
 
 	debug("Server Options", {
 		hostname,
@@ -195,7 +194,16 @@ export function serve({
 				if (enableRateLimit) {
 					const userId = ws.data.auth?.userId ?? ws.data.id;
 					const limit = authRules.getRateLimit(ws.data.auth?.userId);
-					rateLimiter = new RateLimiter(limit, limit);
+
+					// Get or create rate limiter for this user
+					let rateLimiter = rateLimiters.get(userId);
+					if (!rateLimiter) {
+						rateLimiter = RateLimiter.FromOptions({
+							capacity: limit,
+							refillRate: limit,
+						});
+						rateLimiters.set(userId, rateLimiter);
+					}
 
 					if (!rateLimiter.tryConsume(userId)) {
 						warn(`[ws] Rate limit exceeded for ${userId}`);
@@ -297,7 +305,11 @@ export function serve({
 				// Clear rate limit
 				if (enableRateLimit) {
 					const userId = ws.data.auth?.userId ?? ws.data.id;
-					rateLimiter.clear(userId);
+					const rateLimiter = rateLimiters.get(userId);
+					if (rateLimiter) {
+						rateLimiter.clear(userId);
+						rateLimiters.delete(userId);
+					}
 				}
 
 				debug(

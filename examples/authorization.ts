@@ -13,6 +13,8 @@ import {
 } from "../shared/Authorization.ts";
 import { RpcPeer } from "../shared/RpcPeer.ts";
 
+console.debug = () => {};
+
 // 1. Set up authentication validator with some test tokens
 const validator = SimpleAuthValidator.FromTokens({
 	"user1-secret-token": "user1",
@@ -41,9 +43,15 @@ const server = serve({
 });
 
 console.log(`Server running at ${server.url}`);
+
+// Convert HTTP URL to WebSocket URL
+const wsUrl = server.url
+	.toString()
+	.replace("http://", "ws://")
+	.replace("https://", "wss://");
 console.log("\nTo connect with authentication:");
 console.log(
-	"1. WebSocket URL with token: ws://localhost:3000/chat?token=user1-secret-token",
+	`1. WebSocket URL with token: ${wsUrl}chat?token=user1-secret-token`,
 );
 console.log(
 	"2. HTTP Authorization header: Authorization: Bearer user1-secret-token\n",
@@ -67,7 +75,7 @@ async function exampleClient() {
 	// Create client with authentication token
 	// Option 1: Pass token in URL
 	const client1 = RpcPeer.FromOptions({
-		url: "ws://localhost:3000/chat?token=user1-secret-token",
+		url: `${wsUrl}chat?token=user1-secret-token`,
 		name: "AuthenticatedClient1",
 		requestSchema: RequestSchema,
 		responseSchema: ResponseSchema,
@@ -107,12 +115,23 @@ async function exampleClient() {
 
 	// Reconnect with same session
 	const client1Reconnected = RpcPeer.FromOptions({
-		url: "ws://localhost:3000/chat?token=user1-secret-token",
+		url: `${wsUrl}chat?token=user1-secret-token`,
 		name: "AuthenticatedClient1Reconnected",
 		sessionId, // Pass saved session ID for restoration
 		requestSchema: RequestSchema,
 		responseSchema: ResponseSchema,
 		enableHeartbeat: true,
+	});
+
+	// Set up request handler for reconnected client
+	client1Reconnected.match(async (data: RequestApi, from?: string) => {
+		console.log(`Client1Reconnected received request from ${from}:`, data);
+		if (data.type === "greet") {
+			return { type: "greeting", message: `Hello ${data.name}!` };
+		}
+		if (data.type === "ping") {
+			return { type: "pong" };
+		}
 	});
 
 	await new Promise((resolve) => {
@@ -130,11 +149,22 @@ async function exampleClient() {
 
 	// Create another client with different user
 	const client2 = RpcPeer.FromOptions({
-		url: "ws://localhost:3000/chat?token=user2-secret-token",
+		url: `${wsUrl}chat?token=user2-secret-token`,
 		name: "AuthenticatedClient2",
 		requestSchema: RequestSchema,
 		responseSchema: ResponseSchema,
 		enableHeartbeat: true,
+	});
+
+	// Set up request handler for client2
+	client2.match(async (data: RequestApi, from?: string) => {
+		console.log(`Client2 received request from ${from}:`, data);
+		if (data.type === "greet") {
+			return { type: "greeting", message: `Hello ${data.name}!` };
+		}
+		if (data.type === "ping") {
+			return { type: "pong" };
+		}
 	});
 
 	await new Promise((resolve) => {
@@ -157,7 +187,9 @@ async function exampleClient() {
 	console.log("Received response:", response.data);
 
 	// Test rate limiting by sending many requests rapidly
-	console.log("\nTesting rate limiting...");
+	console.log(
+		"\nTesting rate limiting (sending 60 requests simultaneously)...",
+	);
 	const promises = [];
 	if (!client1Reconnected.clientId) {
 		throw new Error("Client1 not connected");
@@ -166,10 +198,23 @@ async function exampleClient() {
 		promises.push(
 			client2
 				.call({ type: "ping" }, client1Reconnected.clientId)
-				.catch((err) => console.log(`Request ${i} failed:`, err.message)),
+				.then(() => ({ success: true, index: i }))
+				.catch((err) => ({ success: false, index: i, error: err.message })),
 		);
 	}
-	await Promise.allSettled(promises);
+	const results = await Promise.allSettled(promises);
+
+	const successful = results.filter(
+		(r) => r.status === "fulfilled" && r.value.success,
+	).length;
+	const failed = results.filter(
+		(r) => r.status === "fulfilled" && !r.value.success,
+	).length;
+
+	console.log(
+		`\nRate limiting test complete: ${successful} succeeded, ${failed} rate-limited/failed`,
+	);
+	console.log(`(user2 rate limit: ${rules.getRateLimit("user2")} msg/s)`);
 
 	// Clean up
 	setTimeout(async () => {

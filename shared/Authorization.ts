@@ -194,6 +194,12 @@ export interface Bucket {
 
 export type BucketMap<TNames extends string = string> = Map<TNames, Bucket>;
 
+export interface RateLimiterOptions<TBucketMap extends BucketMap> {
+	readonly capacity?: number;
+	readonly refillRate?: number;
+	readonly buckets?: TBucketMap;
+}
+
 /**
  * Rate limiter using token bucket algorithm
  */
@@ -202,13 +208,32 @@ export class RateLimiter<TBucketNames extends string = string> {
 		/**
 		 * Maximum tokens in bucket (burst capacity)
 		 */
-		public readonly capacity = 100,
+		public readonly capacity: number = RateLimiter.DefaultCapacity,
 		/**
 		 * Tokens per second
 		 */
-		public readonly refillRate = 100,
+		public readonly refillRate: number = RateLimiter.DefaultRefillRate,
 		private readonly buckets: BucketMap<TBucketNames> = new Map(),
 	) {}
+
+	static Default<
+		TBucketNames extends string = string,
+	>(): RateLimiter<TBucketNames> {
+		return new RateLimiter();
+	}
+
+	static DefaultCapacity = 100 as const;
+	static DefaultRefillRate = 100 as const;
+
+	static FromOptions<const TBucketNames extends string = string>(
+		options: RateLimiterOptions<BucketMap<TBucketNames>>,
+	): RateLimiter<TBucketNames> {
+		return new RateLimiter(
+			options.capacity ?? RateLimiter.DefaultCapacity,
+			options.refillRate ?? RateLimiter.DefaultRefillRate,
+			options.buckets ?? new Map(),
+		);
+	}
 
 	/**
 	 * Check if action is allowed and consume a token
@@ -346,6 +371,11 @@ export class SimpleAuthValidator<
 export class NoAuthValidator<TAuthContext extends AuthContext = AuthContext>
 	implements AuthValidator<TAuthContext>
 {
+	static Default<
+		TAuthContext extends AuthContext = AuthContext,
+	>(): NoAuthValidator<TAuthContext> {
+		return new NoAuthValidator();
+	}
 	validate(_token: string | null): TAuthContext {
 		return {
 			permissions: new Set(["*"]),
