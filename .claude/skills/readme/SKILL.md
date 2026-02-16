@@ -1,5 +1,5 @@
 ---
-name: typescript-readme
+name: readme
 description: Generate or update README.md files and API reference guides for TypeScript projects. Focuses on architecture, installation, and auto-generated API tables.
 ---
 
