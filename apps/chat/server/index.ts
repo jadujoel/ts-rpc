@@ -12,6 +12,15 @@ interface WebSocketData {
 const clients = new Map<string, ServerWebSocket<WebSocketData>>();
 const usernames = new Map<string, string>(); // clientId -> username
 
+interface StoredMessage {
+	from: string;
+	fromName: string;
+	content: string;
+	timestamp: number;
+}
+const messageHistory: StoredMessage[] = [];
+const MAX_HISTORY = 100;
+
 /**
  * Simple chat relay server
  * Handles message routing and user management
@@ -79,8 +88,25 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 						const requestData = data.data;
 
 						switch (requestData.type) {
-							case "join":
+							case "join": {
 								usernames.set(ws.data.id, requestData.username);
+
+								// Send message history to the joining user
+								if (messageHistory.length > 0) {
+									ws.send(
+										JSON.stringify({
+											category: "request",
+											requestId: crypto.randomUUID(),
+											from: "server",
+											fromName: "Server",
+											data: {
+												type: "message-history",
+												messages: messageHistory,
+											},
+										}),
+									);
+								}
+
 								// Broadcast user joined
 								server.publish(
 									ws.data.topic,
@@ -98,6 +124,7 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 									}),
 								);
 								break;
+							}
 
 							case "leave":
 								usernames.delete(ws.data.id);
@@ -118,7 +145,18 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 								);
 								break;
 
-							case "message":
+							case "message": {
+								const timestamp = Date.now();
+								const msg: StoredMessage = {
+									from: ws.data.id,
+									fromName: requestData.username,
+									content: requestData.content,
+									timestamp,
+								};
+								messageHistory.push(msg);
+								if (messageHistory.length > MAX_HISTORY) {
+									messageHistory.shift();
+								}
 								// Broadcast message to all clients on the topic
 								server.publish(
 									ws.data.topic,
@@ -129,14 +167,12 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 										fromName: requestData.username,
 										data: {
 											type: "message",
-											from: ws.data.id,
-											fromName: requestData.username,
-											content: requestData.content,
-											timestamp: Date.now(),
+											...msg,
 										},
 									}),
 								);
 								break;
+							}
 
 							case "list-users": {
 								// Send user list back to requester

@@ -32,9 +32,11 @@ export function ChatApp() {
 		}
 
 		type ChatResponse = z.infer<typeof ChatResponseSchema>;
-		peer.onNotification((data: ChatResponse) => {
+		peer.onNotification((data: ChatResponse, from?: string) => {
 			switch (data.type) {
 				case "message": {
+					// Skip own messages — already added optimistically
+					if (from === peer.clientId) break;
 					setMessages((prev) => [
 						...prev,
 						{
@@ -44,6 +46,19 @@ export function ChatApp() {
 							content: data.content,
 							timestamp: data.timestamp,
 						},
+					]);
+					break;
+				}
+				case "message-history": {
+					setMessages((prev) => [
+						...prev,
+						...data.messages.map((msg) => ({
+							id: crypto.randomUUID(),
+							from: msg.from,
+							fromName: msg.fromName,
+							content: msg.content,
+							timestamp: msg.timestamp,
+						})),
 					]);
 					break;
 				}

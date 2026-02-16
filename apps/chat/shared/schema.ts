@@ -55,6 +55,17 @@ export const ChatResponseSchema = z.discriminatedUnion("type", [
 		),
 	}),
 	z.object({
+		type: z.literal("message-history"),
+		messages: z.array(
+			z.object({
+				from: z.string(),
+				fromName: z.string(),
+				content: z.string(),
+				timestamp: z.number(),
+			}),
+		),
+	}),
+	z.object({
 		type: z.literal("error"),
 		message: z.string(),
 	}),
