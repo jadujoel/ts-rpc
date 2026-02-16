@@ -58,6 +58,7 @@ const sessions = new Map<string, string>();
 let rateLimiter: RateLimiter;
 
 let Logger = console;
+const debug = (...args: unknown[]) => Logger.debug("[Server]", ...args);
 const log = (...args: unknown[]) => Logger.log("[Server]", ...args);
 const error = (...args: unknown[]) => Logger.error("[Server]", ...args);
 const warn = (...args: unknown[]) => Logger.warn("[Server]", ...args);
@@ -78,7 +79,7 @@ export function serve({
 	Logger = logger;
 	rateLimiter = new RateLimiter();
 
-	log("Server Options", {
+	debug("Server Options", {
 		hostname,
 		port,
 		development,
@@ -102,7 +103,7 @@ export function serve({
 				return new Response("404");
 			}
 
-			console.time(`Request ${request.url}`);
+			timeEnd(`Request ${request.url}`);
 			if (request.headers.get("upgrade")) {
 				// Validate authentication before upgrade
 				const token =
@@ -145,7 +146,7 @@ export function serve({
 					sessions.set(ws.data.auth.sessionId, ws.data.id);
 				}
 
-				log(
+				debug(
 					`[ws] open ${ws.remoteAddress} id: ${ws.data.id} topic: ${topic} userId: ${ws.data.auth?.userId ?? "anonymous"} subscribers: ${server.subscriberCount(topic)}`,
 				);
 
@@ -250,7 +251,7 @@ export function serve({
 
 						const target = clients.get(parsed.to);
 						if (target) {
-							// log(`[ws] Routing message from ${ws.data.id} to ${parsed.to}`);
+							debug(`[ws] Routing message from ${ws.data.id} to ${parsed.to}`);
 							target.send(message);
 						} else {
 							warn(`[ws] Target ${parsed.to} not found`);
@@ -299,14 +300,13 @@ export function serve({
 					rateLimiter.clear(userId);
 				}
 
-				log(
+				debug(
 					`[ws] close ${ws.remoteAddress} id: ${ws.data.id} code: ${code} reason: ${reason}`,
 				);
 			},
 		},
 	});
 	log(`Server running at ${server.url}`);
-	log(`Websocket running at ws://${server.hostname}:${server.port}`);
 	return server;
 }
 

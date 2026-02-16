@@ -14,26 +14,27 @@ import {
 import { RpcPeer } from "../shared/RpcPeer.ts";
 
 // 1. Set up authentication validator with some test tokens
-const authValidator = new SimpleAuthValidator();
-authValidator.addToken("user1-secret-token", "user1");
-authValidator.addToken("user2-secret-token", "user2");
-authValidator.addToken("admin-secret-token", "admin");
+const validator = SimpleAuthValidator.FromTokens({
+	"user1-secret-token": "user1",
+	"user2-secret-token": "user2",
+	"admin-secret-token": "admin",
+});
 
 // 2. Set up authorization rules
-const authRules = new StrictAuthorizationRules(
-	new Set(["admin"]), // admin users
-	new Map([
+const rules = StrictAuthorizationRules.FromOptions({
+	adminUsers: ["admin"], // admin users
+	topicPermissions: new Map([
 		["chat", new Set(["user1", "user2", "admin"])], // chat topic accessible to these users
 		["admin-only", new Set(["admin"])], // admin-only topic
 	]),
-);
+});
 
 // 3. Start server with authentication and authorization
 const server = serve({
-	hostname: "localhost",
-	port: 3000,
-	authValidator,
-	authRules,
+	hostname: "127.0.0.1",
+	port: 0,
+	authValidator: validator,
+	authRules: rules,
 	enableRateLimit: true,
 	maxMessageSize: 1024 * 100, // 100KB max message
 	enableSessionPersistence: true, // Enable session restoration

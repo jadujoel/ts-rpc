@@ -6,6 +6,7 @@ import {
 } from "../shared/SchemaExample";
 
 export async function example() {
+	console.debug = () => {}; // Disable debug logs for cleaner output
 	const server = serve({
 		hostname: "127.0.0.1",
 		port: 8080,
@@ -26,7 +27,6 @@ export async function example() {
 	});
 
 	peer2.match((data) => {
-		console.log("Peer2 received", data);
 		switch (data.type) {
 			case "score":
 				return {
@@ -38,6 +38,11 @@ export async function example() {
 					type: "greet",
 					greeting: `Hello ${data.name}, from peer2!`,
 				};
+			case "game":
+				return {
+					type: "game",
+					name: "McDoodles Adventures",
+				};
 			default:
 				return {
 					type: "unknown",
@@ -47,13 +52,8 @@ export async function example() {
 
 	await peer1.waitForWelcome();
 	await peer2.waitForWelcome();
-	console.log(
-		"Received welcome message with clientId:",
-		peer1.clientId,
-		peer2.clientId,
-	);
-
-	console.log("Sending Score request...");
+	console.log("Welcome Recieved");
+	console.log("Score Request...");
 	const score = await peer1.call(
 		{
 			type: "score",
@@ -61,13 +61,21 @@ export async function example() {
 		peer2.clientId,
 	);
 
-	console.log("Score:", score.data);
+	if (score.data.type === "score") {
+		console.log("Score Result:", score.data.score);
+	} else {
+		throw new Error("Unexpected response type");
+	}
 
 	const game = await peer1.call({
 		type: "game",
 	});
 
-	console.log("game", game);
+	if (game.data.type === "game") {
+		console.log("Game Result", game.data.type);
+	} else {
+		throw new Error("Unexpected response type");
+	}
 
 	const greeting = await peer1.call({
 		type: "greet",

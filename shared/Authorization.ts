@@ -147,12 +147,19 @@ export class StrictAuthorizationRules<
 		});
 	}
 
-	canSubscribeToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
-		if (!userId) return false;
-		if (this.admins.has(userId)) return true;
+	canSubscribeToTopic(
+		userId: TUserId | undefined | (string & {}),
+		topic: TTopic,
+	): boolean {
+		if (!userId) {
+			return false;
+		}
+		if (this.admins.has(userId as TUserId)) {
+			return true;
+		}
 
 		const allowedUsers = this.topicPermissions.get(topic);
-		return allowedUsers ? allowedUsers.has(userId) : false;
+		return allowedUsers ? allowedUsers.has(userId as TUserId) : false;
 	}
 
 	canPublishToTopic(userId: TUserId | undefined, topic: TTopic): boolean {
@@ -286,6 +293,22 @@ export class SimpleAuthValidator<
 			TUserId
 		> = new Map(),
 	) {}
+
+	static FromTokens<
+		const TTokenName extends string = string,
+		const TUserId extends string = string,
+		const TAuthContext extends AuthContext = AuthContext,
+	>(
+		tokens: Record<TTokenName, TUserId>,
+	): SimpleAuthValidator<TTokenName, TUserId, TAuthContext> {
+		const validTokens: ValidTokensMap<TTokenName, TUserId> = new Map(
+			Object.entries(tokens).map(([token, userId]) => [
+				token as TTokenName,
+				{ userId: userId as TUserId },
+			]),
+		);
+		return new SimpleAuthValidator(validTokens);
+	}
 
 	validate(token: TTokenName | null): TAuthContext | null {
 		if (!token) return null;
