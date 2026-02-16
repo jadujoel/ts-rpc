@@ -24,7 +24,7 @@ export function ChatApp() {
 	// Auto-scroll to bottom when new messages arrive
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-	}, []);
+	}, [messages]);
 
 	// Set up message listener
 	useEffect(() => {
@@ -59,12 +59,17 @@ export function ChatApp() {
 							timestamp: data.timestamp,
 						},
 					]);
-					// Refresh user list
-					peer.call({ type: "list-users" }).then((response) => {
-						if (response.data.type === "user-list") {
-							setUsers(response.data.users);
+					// Refresh user list asynchronously
+					(async () => {
+						try {
+							const response = await peer.call({ type: "list-users" });
+							if (response.data.type === "user-list") {
+								setUsers(response.data.users);
+							}
+						} catch (error) {
+							console.error("Failed to refresh user list:", error);
 						}
-					});
+					})();
 					break;
 				}
 				case "user-left": {
@@ -78,12 +83,17 @@ export function ChatApp() {
 							timestamp: data.timestamp,
 						},
 					]);
-					// Refresh user list
-					peer.call({ type: "list-users" }).then((response) => {
-						if (response.data.type === "user-list") {
-							setUsers(response.data.users);
+					// Refresh user list asynchronously
+					(async () => {
+						try {
+							const response = await peer.call({ type: "list-users" });
+							if (response.data.type === "user-list") {
+								setUsers(response.data.users);
+							}
+						} catch (error) {
+							console.error("Failed to refresh user list:", error);
 						}
-					});
+					})();
 					break;
 				}
 				case "user-list": {
@@ -119,7 +129,13 @@ export function ChatApp() {
 		if (!username.trim()) return;
 
 		try {
-			await connect();
+			// Connect if not already connected
+			if (connectionState !== "connected") {
+				await connect();
+				// Wait for React to update the peer reference
+				await new Promise(resolve => setTimeout(resolve, 100));
+			}
+
 			if (peer) {
 				await peer.send({ type: "join", username: username.trim() });
 				setIsJoined(true);
@@ -139,13 +155,29 @@ export function ChatApp() {
 		e.preventDefault();
 		if (!inputMessage.trim() || !peer || !isJoined) return;
 
+		const messageContent = inputMessage.trim();
+		const timestamp = Date.now();
+
 		try {
+			// Optimistically add message to local state immediately
+			setMessages((prev) => [
+				...prev,
+				{
+					id: crypto.randomUUID(),
+					from: clientId || "unknown",
+					fromName: username,
+					content: messageContent,
+					timestamp,
+				},
+			]);
+			setInputMessage("");
+
+			// Send to server (fire-and-forget, server will broadcast to others)
 			await peer.send({
 				type: "message",
-				content: inputMessage.trim(),
+				content: messageContent,
 				username,
 			});
-			setInputMessage("");
 		} catch (error) {
 			console.error("Failed to send message:", error);
 		}
