@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import type { RpcWelcome } from "../../../lib";
 import App from "../client/index.html";
@@ -18,8 +19,36 @@ interface StoredMessage {
 	content: string;
 	timestamp: number;
 }
-const messageHistory: StoredMessage[] = [];
+
 const MAX_HISTORY = 100;
+
+const db = new Database("chat.sqlite");
+db.run(`CREATE TABLE IF NOT EXISTS messages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	"from" TEXT NOT NULL,
+	fromName TEXT NOT NULL,
+	content TEXT NOT NULL,
+	timestamp INTEGER NOT NULL
+)`);
+
+const insertMsg = db.prepare<void, [string, string, string, number]>(
+	`INSERT INTO messages ("from", fromName, content, timestamp) VALUES (?, ?, ?, ?)`,
+);
+const getHistory = db.prepare<StoredMessage, []>(
+	`SELECT "from", fromName, content, timestamp FROM messages ORDER BY id DESC LIMIT ${MAX_HISTORY}`,
+);
+const trimOld = db.prepare<void, [number]>(
+	`DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT ?)`,
+);
+
+function getMessageHistory(): StoredMessage[] {
+	return getHistory.all().reverse();
+}
+
+function pushMessage(msg: StoredMessage): void {
+	insertMsg.run(msg.from, msg.fromName, msg.content, msg.timestamp);
+	trimOld.run(MAX_HISTORY);
+}
 
 /**
  * Simple chat relay server
@@ -92,7 +121,8 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 								usernames.set(ws.data.id, requestData.username);
 
 								// Send message history to the joining user
-								if (messageHistory.length > 0) {
+								const history = getMessageHistory();
+								if (history.length > 0) {
 									ws.send(
 										JSON.stringify({
 											category: "request",
@@ -101,7 +131,7 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 											fromName: "Server",
 											data: {
 												type: "message-history",
-												messages: messageHistory,
+												messages: history,
 											},
 										}),
 									);
@@ -153,10 +183,7 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 									content: requestData.content,
 									timestamp,
 								};
-								messageHistory.push(msg);
-								if (messageHistory.length > MAX_HISTORY) {
-									messageHistory.shift();
-								}
+								pushMessage(msg);
 								// Broadcast message to all clients on the topic
 								server.publish(
 									ws.data.topic,

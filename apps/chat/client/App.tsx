@@ -138,22 +138,16 @@ export function ChatApp() {
 		if (!username.trim()) return;
 
 		try {
-			// Connect if not already connected
-			if (connectionState !== "connected") {
-				await connect();
-				// Wait for React to update the peer reference
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
+			// Use the peer returned by connect() directly to avoid stale closure
+			const connectedPeer = peer ?? (await connect());
 
-			if (peer) {
-				await peer.send({ type: "join", username: username.trim() });
-				setIsJoined(true);
+			await connectedPeer.send({ type: "join", username: username.trim() });
+			setIsJoined(true);
 
-				// Get initial user list
-				const response = await peer.call({ type: "list-users" });
-				if (response.data.type === "user-list") {
-					setUsers(response.data.users);
-				}
+			// Get initial user list
+			const response = await connectedPeer.call({ type: "list-users" });
+			if (response.data.type === "user-list") {
+				setUsers(response.data.users);
 			}
 		} catch (error) {
 			console.error("Failed to join:", error);
@@ -209,7 +203,6 @@ export function ChatApp() {
 		return (
 			<div className="app">
 				<div className="join-container">
-					<h1>Chat Room</h1>
 					<div className="card">
 						<h2>Join the Chat</h2>
 						<input
