@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
-import type { RpcWelcome } from "../../../lib";
+import type { RpcWelcome } from "../../../../lib.ts";
 import App from "../client/index.html";
 
 interface WebSocketData {
@@ -10,7 +9,7 @@ interface WebSocketData {
 	username?: string;
 }
 
-const clients = new Map<string, ServerWebSocket<WebSocketData>>();
+const clients = new Map<string, Bun.ServerWebSocket<WebSocketData>>();
 const usernames = new Map<string, string>(); // clientId -> username
 
 interface StoredMessage {
@@ -54,7 +53,7 @@ function pushMessage(msg: StoredMessage): void {
  * Simple chat relay server
  * Handles message routing and user management
  */
-export function createChatServer(port = 8080): Server<WebSocketData> {
+export function createChatServer(port = 8080): Bun.Server {
 	const server = Bun.serve({
 		port,
 		routes: {
@@ -90,7 +89,7 @@ export function createChatServer(port = 8080): Server<WebSocketData> {
 				},
 			);
 		},
-		websocket: <WebSocketHandler<WebSocketData>>{
+		websocket: <Bun.WebSocketHandler<WebSocketData>>{
 			async open(ws): Promise<void> {
 				const topic = ws.data.topic;
 				ws.subscribe(topic);

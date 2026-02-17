@@ -2,7 +2,7 @@
  * Example: Using Authentication and Authorization
  *
  * This example demonstrates how to set up and use the authentication
- * and authorization features of ts-signal-rpc.
+ * and authorization features of ts--rpc.
  *
  * Key concepts covered:
  * - Token-based authentication (SimpleAuthValidator)

@@ -1,6 +1,6 @@
-# ts-signal-rpc Demo Applications
+# ts--rpc Demo Applications
 
-Interactive React applications demonstrating the features of **ts-signal-rpc** - a TypeScript WebSocket RPC library with relay server architecture.
+Interactive React applications demonstrating the features of **ts--rpc** - a TypeScript WebSocket RPC library with relay server architecture.
 
 ## 🎯 Available Demos
 
@@ -97,25 +97,48 @@ The client will be served via Bun. Open the provided URL in multiple windows and
 
 ## 🚀 Quick Start
 
+### Install Dependencies
+```bash
+# From apps/ directory
+bun install
+```
+
 ### Run All Demos Simultaneously
 ```bash
 # From apps/ directory
-bun install:all    # Install dependencies for all apps
-bun run dev:all    # Start all three demos on different ports
+bun run dev
 ```
 
-Each demo will output its URL when started. Open the URLs in your browser.
+This uses Bun workspaces to start all three demos on different ports. Each demo will output its URL when started. Open the URLs in your browser.
 
 ### Run Individual Demos
 ```bash
-# Chat
-bun run dev:chat
+# Navigate to specific app directory
+cd apps/chat
+bun install
+bun run dev
 
-# Auth
-bun run dev:auth
+# Or for auth
+cd apps/auth
+bun install
+bun run dev
 
-# P2P
-bun run dev:p2p
+# Or for p2p
+cd apps/p2p
+bun install
+bun run dev
+```
+
+### Build All Demos
+```bash
+# From apps/ directory
+bun run build
+```
+
+### Type Check All Demos
+```bash
+# From apps/ directory
+bun run validate
 ```
 
 ---
@@ -165,7 +188,7 @@ apps/
 - **Frontend:** [React 18](https://react.dev) - UI library
 - **Bundler:** Bun's native bundler (no Vite needed!)
 - **Validation:** [Zod](https://zod.dev) - TypeScript-first schema validation
-- **RPC Library:** ts-signal-rpc (from parent directory)
+- **RPC Library:** ts--rpc (from parent directory)
 
 ---
 
@@ -276,7 +299,7 @@ cd apps/chat && bun run build
 
 ## 🤝 Contributing
 
-These demos are part of the ts-signal-rpc library. To contribute:
+These demos are part of the ts--rpc library. To contribute:
 
 1. Fork the repository
 2. Create a feature branch
@@ -288,7 +311,7 @@ These demos are part of the ts-signal-rpc library. To contribute:
 
 ## 📝 License
 
-Same as ts-signal-rpc library. See [../LICENSE](../LICENSE).
+Same as ts--rpc library. See [../LICENSE](../LICENSE).
 
 ---
 
