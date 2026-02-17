@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type z from "zod";
-import type { Message } from "../../shared/types.ts";
-import { useRpcPeer } from "../../shared/useRpcPeer.ts";
+import type { Message } from "../../../shared/types.ts";
+import { useRpcPeer } from "../../../shared/useRpcPeer.ts";
 import { ChatRequestSchema, ChatResponseSchema } from "../shared/schema.ts";
 
 export function ChatApp() {

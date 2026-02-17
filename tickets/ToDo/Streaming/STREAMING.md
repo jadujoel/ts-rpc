@@ -1,6 +1,6 @@
 # WebSocket Streaming Implementation
 
-This document describes the streaming capabilities added to the ts-signal-rpc library.
+This document describes the streaming capabilities added to the ts--rpc library.
 
 ## Overview
 

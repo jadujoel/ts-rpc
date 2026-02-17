@@ -1,6 +1,6 @@
-# ts-signal-rpc Demo Applications
+# ts--rpc Demo Applications
 
-Interactive React applications demonstrating the features of **ts-signal-rpc** - a TypeScript WebSocket RPC library with relay server architecture.
+Interactive React applications demonstrating the features of **ts--rpc** - a TypeScript WebSocket RPC library with relay server architecture.
 
 ## 🎯 Available Demos
 
@@ -165,7 +165,7 @@ apps/
 - **Frontend:** [React 18](https://react.dev) - UI library
 - **Bundler:** Bun's native bundler (no Vite needed!)
 - **Validation:** [Zod](https://zod.dev) - TypeScript-first schema validation
-- **RPC Library:** ts-signal-rpc (from parent directory)
+- **RPC Library:** ts--rpc (from parent directory)
 
 ---
 
@@ -276,7 +276,7 @@ cd apps/chat && bun run build
 
 ## 🤝 Contributing
 
-These demos are part of the ts-signal-rpc library. To contribute:
+These demos are part of the ts--rpc library. To contribute:
 
 1. Fork the repository
 2. Create a feature branch
@@ -288,7 +288,7 @@ These demos are part of the ts-signal-rpc library. To contribute:
 
 ## 📝 License
 
-Same as ts-signal-rpc library. See [../LICENSE](../LICENSE).
+Same as ts--rpc library. See [../LICENSE](../LICENSE).
 
 ---
 

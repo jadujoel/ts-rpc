@@ -1,0 +1,12 @@
+{
+	"name": "chat-demo",
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "bun server/index.ts --hot",
+		"build": "bun build server/index.ts --outdir=dist --target=bun"
+	},
+	"dependencies": {
+		"react": "*"
+	}
+}

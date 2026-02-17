@@ -504,10 +504,12 @@ export class SimpleAuthValidator<
 	 * Validates a token by checking if it exists in the valid tokens map.
 	 * @param token - The authentication token to validate
 	 * @returns AuthContext if valid, null otherwise
-	 */ validate(token: TTokenName | null): TAuthContext | null {
-		if (!token) return null;
+	 */ validate(token?: TTokenName | (string & {}) | null): TAuthContext | null {
+		if (!token) {
+			return null;
+		}
 
-		const user = this.validTokens.get(token);
+		const user = this.validTokens.get(token as TTokenName);
 		if (!user) return null;
 
 		const result: TAuthContext = {

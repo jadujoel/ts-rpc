@@ -1,4 +1,4 @@
-# ts-signal-rpc
+# ts--rpc
 
 This repo explores valid typed remote procedure calls (RPC) using WebSockets and TypeScript. It uses a relay server architecture where a "Service" and a "Client" communicate via a shared WebSocket topic.
 
