@@ -97,25 +97,48 @@ The client will be served via Bun. Open the provided URL in multiple windows and
 
 ## 🚀 Quick Start
 
+### Install Dependencies
+```bash
+# From apps/ directory
+bun install
+```
+
 ### Run All Demos Simultaneously
 ```bash
 # From apps/ directory
-bun install:all    # Install dependencies for all apps
-bun run dev:all    # Start all three demos on different ports
+bun run dev
 ```
 
-Each demo will output its URL when started. Open the URLs in your browser.
+This uses Bun workspaces to start all three demos on different ports. Each demo will output its URL when started. Open the URLs in your browser.
 
 ### Run Individual Demos
 ```bash
-# Chat
-bun run dev:chat
+# Navigate to specific app directory
+cd apps/chat
+bun install
+bun run dev
 
-# Auth
-bun run dev:auth
+# Or for auth
+cd apps/auth
+bun install
+bun run dev
 
-# P2P
-bun run dev:p2p
+# Or for p2p
+cd apps/p2p
+bun install
+bun run dev
+```
+
+### Build All Demos
+```bash
+# From apps/ directory
+bun run build
+```
+
+### Type Check All Demos
+```bash
+# From apps/ directory
+bun run validate
 ```
 
 ---

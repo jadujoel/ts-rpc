@@ -28,3 +28,7 @@ If the project structure is complex, include a "Project Structure" section using
 ## 4. Documentation Quality Rules
 - **No Stale Examples**: Ensure code examples actually match the current implementation.
 - **Consistency**: Use the same terminology found in the source code.
+
+
+## Extra
+Wherever applicable in the docs instead of using "new" like in new StrictAuthorizationRules instead use the static From methods
