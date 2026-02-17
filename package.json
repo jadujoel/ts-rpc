@@ -1,5 +1,5 @@
 {
-	"name": "ts-rpc",
+	"name": "@jadujoel/ts-rpc",
 	"module": "lib.ts",
 	"type": "module",
 	"private": false,
