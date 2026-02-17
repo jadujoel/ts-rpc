@@ -5,7 +5,7 @@
 	"private": true,
 	"description": "Demo applications showcasing ts-rpc features",
 	"scripts": {
-		"dev": "bun run -w dev",
+		"dev": "bun --workspaces run dev",
 		"build": "bun --workspaces run build",
 		"validate": "bunx --workspaces tsc --noEmit"
 	},
