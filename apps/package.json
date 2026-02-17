@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "bun run -w dev",
 		"build": "bun --workspaces run build",
-		"validate": "bun --workspaces tsc --noEmit"
+		"validate": "bunx --workspaces tsc --noEmit"
 	},
 	"workspaces": [
 		"packages/*"
