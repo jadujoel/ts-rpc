@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MatchHandler } from "../../../../shared/RpcPeer.ts";
 import { useRpcPeer } from "../../../shared/useRpcPeer.ts";
 import {
 	P2PRequestSchema,
@@ -49,7 +50,7 @@ export function P2PApp() {
 	useEffect(() => {
 		if (!peer) return;
 
-		peer.match((data: P2PResponse) => {
+		peer.match<MatchHandler<P2PResponse>>((data: P2PResponse) => {
 			switch (data.type) {
 				case "direct-message":
 					setMessages((prev) => [
@@ -108,8 +109,8 @@ export function P2PApp() {
 		if (!name.trim()) return;
 
 		try {
-			const url = `ws://localhost:8082/p2p?name=${encodeURIComponent(name.trim())}`;
-			const newPeer = await connect();
+			const _url = `ws://localhost:8082/p2p?name=${encodeURIComponent(name.trim())}`;
+			const _newPeer = await connect();
 			setIsConnected(true);
 		} catch (error) {
 			console.error("Failed to connect:", error);
@@ -210,6 +211,7 @@ export function P2PApp() {
 							maxLength={50}
 						/>
 						<button
+							type="button"
 							onClick={handleConnect}
 							disabled={!name.trim() || connectionState === "connecting"}
 							className="button"
@@ -241,8 +243,9 @@ export function P2PApp() {
 					<h3>Connected Peers ({peers.length})</h3>
 					<div className="peer-list">
 						{peers.map((p) => (
-							<div
+							<button
 								key={p.id}
+								type="button"
 								className={`peer-item ${selectedPeer === p.id ? "selected" : ""} ${
 									p.id === clientId ? "current-peer" : ""
 								}`}
@@ -252,13 +255,14 @@ export function P2PApp() {
 										setMessageMode("direct");
 									}
 								}}
+								disabled={p.id === clientId}
 							>
 								<div className="peer-name">
 									{p.name}
 									{p.id === clientId && " (you)"}
 								</div>
 								<div className="peer-id">{p.id.slice(0, 8)}</div>
-							</div>
+							</button>
 						))}
 					</div>
 				</div>
@@ -304,6 +308,7 @@ export function P2PApp() {
 					<div className="message-input-container">
 						<div className="mode-selector">
 							<button
+								type="button"
 								className={`mode-button ${messageMode === "direct" ? "active" : ""}`}
 								onClick={() => setMessageMode("direct")}
 							>
@@ -315,6 +320,7 @@ export function P2PApp() {
 								)}
 							</button>
 							<button
+								type="button"
 								className={`mode-button ${messageMode === "broadcast" ? "active" : ""}`}
 								onClick={() => setMessageMode("broadcast")}
 							>

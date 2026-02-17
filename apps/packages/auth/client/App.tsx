@@ -1,10 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { RpcPeer } from "../../../../shared/RpcPeer.ts";
-import {
-	AuthRequestSchema,
-	type AuthResponse,
-	AuthResponseSchema,
-} from "../shared/schema.ts";
+import { AuthRequestSchema, AuthResponseSchema } from "../shared/schema.ts";
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -53,6 +49,9 @@ export function AuthApp() {
 
 			await newPeer.waitForWelcome();
 
+			if (!newPeer.clientId) {
+				throw new Error("No client ID assigned by server");
+			}
 			setPeer(newPeer);
 			setClientId(newPeer.clientId);
 			setIsConnected(true);
@@ -184,8 +183,9 @@ export function AuthApp() {
 						{!isConnected ? (
 							<div className="connection-form">
 								<div className="form-group">
-									<label>Authentication Token</label>
+									<label htmlFor="token-select">Authentication Token</label>
 									<select
+										id="token-select"
 										value={token}
 										onChange={(e) => setToken(e.target.value)}
 										className="input"
@@ -202,6 +202,7 @@ export function AuthApp() {
 									</select>
 								</div>
 								<button
+									type="button"
 									onClick={handleConnect}
 									disabled={!token || connectionState === "connecting"}
 									className="button primary"
@@ -217,7 +218,11 @@ export function AuthApp() {
 									<strong>Client ID:</strong>
 									<code>{clientId?.slice(0, 8)}</code>
 								</div>
-								<button onClick={handleDisconnect} className="button secondary">
+								<button
+									type="button"
+									onClick={handleDisconnect}
+									className="button secondary"
+								>
 									Disconnect
 								</button>
 							</div>
@@ -254,13 +259,21 @@ export function AuthApp() {
 						<div className="card">
 							<h2>Actions</h2>
 							<div className="actions">
-								<button onClick={handlePing} className="button">
+								<button type="button" onClick={handlePing} className="button">
 									🏓 Ping Server
 								</button>
-								<button onClick={handleProtectedAction} className="button">
+								<button
+									type="button"
+									onClick={handleProtectedAction}
+									className="button"
+								>
 									🔒 Protected Action
 								</button>
-								<button onClick={handleAdminAction} className="button">
+								<button
+									type="button"
+									onClick={handleAdminAction}
+									className="button"
+								>
 									👑 Admin Action
 								</button>
 							</div>

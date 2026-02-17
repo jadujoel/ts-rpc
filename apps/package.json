@@ -6,13 +6,15 @@
 	"description": "Demo applications showcasing ts-rpc features",
 	"scripts": {
 		"dev": "bun run -w dev",
-		"build": "bun --workspaces run build"
+		"build": "bun --workspaces run build",
+		"validate": "bun --workspaces tsc --noEmit"
 	},
 	"workspaces": [
 		"packages/*"
 	],
 	"dependencies": {
 		"@types/react": "19.2.14",
+		"@types/react-dom": "19.2.3",
 		"react": "19.2.4",
 		"react-dom": "19.2.4"
 	}

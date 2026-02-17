@@ -6,6 +6,7 @@
       "name": "ts--rpc-demos",
       "dependencies": {
         "@types/react": "19.2.14",
+        "@types/react-dom": "19.2.3",
         "react": "19.2.4",
         "react-dom": "19.2.4",
       },
@@ -28,6 +29,8 @@
   },
   "packages": {
     "@types/react": ["@types/react@19.2.14", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w=="],
+
+    "@types/react-dom": ["@types/react-dom@19.2.3", "", { "peerDependencies": { "@types/react": "^19.2.0" } }, "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ=="],
 
     "auth-demo": ["auth-demo@workspace:packages/auth"],
 
