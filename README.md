@@ -288,7 +288,7 @@ import { WS_CLOSE_GOING_AWAY, canReconnect, getCloseCodeDescription } from "./sh
 
 socket.addEventListener("close", (event) => {
   console.log(`Closed: ${getCloseCodeDescription(event.code)}`);
-  
+
   if (canReconnect(event.code)) {
     console.log("Reconnecting...");
     setTimeout(() => connect(), 1000);
