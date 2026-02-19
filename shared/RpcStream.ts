@@ -100,6 +100,19 @@ export interface StreamManagerOptions<TStreamNames extends string = string> {
 	 * @default 10
 	 */
 	readonly backpressureDelay?: number;
+
+	/**
+	 * Timeout in milliseconds before a pending (buffered) stream is discarded
+	 * @default 10000 (10 seconds)
+	 */
+	readonly pendingStreamTimeout?: number;
+
+	/**
+	 * Maximum number of messages to buffer per pending stream
+	 * @default 100
+	 */
+	readonly pendingStreamMaxMessages?: number;
+
 	readonly activeStreams?: Map<TStreamNames, ActiveStreamState>;
 	readonly receivingStreams?: Map<TStreamNames, ReceivingStreamState<unknown>>;
 }
@@ -151,6 +164,8 @@ export class StreamManager {
 	constructor(
 		private readonly maxBufferedAmount: number = StreamManager.DefaultMaxBufferedAmount,
 		private readonly backpressureDelay: number = StreamManager.DefaultBackpressureDelay,
+		private readonly pendingStreamTimeout: number = StreamManager.DefaultPendingStreamTimeout,
+		private readonly pendingStreamMaxMessages: number = StreamManager.DefaultPendingStreamMaxMessages,
 		private readonly activeStreams = new Map<string, ActiveStreamState>(),
 		private readonly receivingStreams = new Map<
 			string,
@@ -219,6 +234,10 @@ export class StreamManager {
 		return new StreamManager(
 			options?.maxBufferedAmount ?? StreamManager.DefaultMaxBufferedAmount,
 			options?.backpressureDelay ?? StreamManager.DefaultBackpressureDelay,
+			options?.pendingStreamTimeout ??
+				StreamManager.DefaultPendingStreamTimeout,
+			options?.pendingStreamMaxMessages ??
+				StreamManager.DefaultPendingStreamMaxMessages,
 			options?.activeStreams ?? new Map(),
 			options?.receivingStreams ?? new Map(),
 		);
@@ -417,11 +436,11 @@ export class StreamManager {
 					const p = this.pendingStreams.get(message.streamId);
 					if (p) {
 						console.warn(
-							`[StreamManager] Pending stream timed out after ${StreamManager.DefaultPendingStreamTimeout}ms: ${message.streamId}`,
+							`[StreamManager] Pending stream timed out after ${this.pendingStreamTimeout}ms: ${message.streamId}`,
 						);
 						this.pendingStreams.delete(message.streamId);
 					}
-				}, StreamManager.DefaultPendingStreamTimeout);
+				}, this.pendingStreamTimeout);
 
 				pending = {
 					messages: [],
@@ -432,9 +451,7 @@ export class StreamManager {
 			}
 
 			// Add message to buffer with size limit
-			if (
-				pending.messages.length >= StreamManager.DefaultPendingStreamMaxMessages
-			) {
+			if (pending.messages.length >= this.pendingStreamMaxMessages) {
 				// Drop oldest message if buffer is full
 				pending.messages.shift();
 				console.warn(
