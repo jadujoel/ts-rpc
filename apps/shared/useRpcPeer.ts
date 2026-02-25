@@ -74,8 +74,10 @@ export function useRpcPeer<
 		autoConnect = false,
 	} = options;
 
+	const mountedRef = useRef(true);
+
 	const connect = async () => {
-		if (peerRef.current) {
+		if (peerRef.current && !peerRef.current.disposed) {
 			return peerRef.current;
 		}
 
@@ -92,6 +94,12 @@ export function useRpcPeer<
 
 			await peer.waitForWelcome();
 
+			// Guard against state updates after unmount (React StrictMode / fast remounts)
+			if (!mountedRef.current) {
+				await peer.dispose();
+				throw new Error("Component unmounted during connect");
+			}
+
 			peerRef.current = peer;
 			if (peer.clientId === undefined) {
 				throw new Error("Peer did not receive clientId from server");
@@ -101,8 +109,10 @@ export function useRpcPeer<
 
 			return peer;
 		} catch (err) {
-			setConnectionState("error");
-			setError(err instanceof Error ? err : new Error(String(err)));
+			if (mountedRef.current) {
+				setConnectionState("error");
+				setError(err instanceof Error ? err : new Error(String(err)));
+			}
 			throw err;
 		}
 	};
@@ -118,13 +128,17 @@ export function useRpcPeer<
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: including it causes error
 	useEffect(() => {
+		mountedRef.current = true;
+
 		if (autoConnect) {
 			connect();
 		}
 
 		return () => {
+			mountedRef.current = false;
 			if (peerRef.current) {
 				peerRef.current.dispose();
+				peerRef.current = null;
 			}
 		};
 	}, [autoConnect]);

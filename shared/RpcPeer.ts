@@ -349,10 +349,56 @@ export class RpcPeer<
 	TName extends string = string,
 	TUrl extends string = string,
 > extends EventTarget {
+	/**
+	 * Whether this peer has been disposed. Once disposed, a peer cannot be reused.
+	 * Use this to check if a peer is still valid before interacting with it.
+	 */
+	public disposed = false;
+
+	/**
+	 * Cached JSON prefix for outgoing request messages.
+	 * Contains the static `category`, `from`, and `fromName` fields
+	 * so they are serialized once instead of on every send.
+	 * Updated when clientId is assigned via welcome message.
+	 * @internal
+	 */
+	private outgoingRequestPrefix = "";
+
+	/**
+	 * Cached JSON prefix for outgoing response messages.
+	 * @internal
+	 */
+	private outgoingResponsePrefix = "";
+
+	/**
+	 * Backing field for clientId. Use the getter/setter to access.
+	 * @internal
+	 */
+	private _clientId: TClientId | undefined;
+
+	/** The assigned client ID. Setting this rebuilds outgoing message caches. */
+	public get clientId(): TClientId | undefined {
+		return this._clientId;
+	}
+	public set clientId(value: TClientId | undefined) {
+		this._clientId = value;
+		this.rebuildOutgoingPrefixes();
+	}
+
+	/**
+	 * Tracked event listeners registered via `match()` and `onNotification()`.
+	 * These are automatically removed when `dispose()` is called.
+	 * @internal
+	 */
+	private readonly trackedListeners: Array<{
+		readonly type: string;
+		readonly listener: EventListener;
+	}> = [];
+
 	private constructor(
 		public readonly url: TUrl,
 		public readonly name: TName,
-		public clientId: TClientId | undefined,
+		clientId: TClientId | undefined,
 		public readonly pendingPromises: PendingPromiseMap = new Map(),
 		public readonly retrySocket: RetrySocket,
 		public readonly requestSchema: TRequestSchema | undefined,
@@ -363,6 +409,28 @@ export class RpcPeer<
 		public readonly streamManager: StreamManager = new StreamManager(),
 	) {
 		super();
+		this._clientId = clientId;
+		this.rebuildOutgoingPrefixes();
+	}
+
+	/**
+	 * Rebuilds cached JSON prefixes for outgoing messages.
+	 * Called on construction and when clientId changes (welcome).
+	 * @internal
+	 */
+	private rebuildOutgoingPrefixes(): void {
+		const from =
+			this.clientId !== undefined ? JSON.stringify(this.clientId) : undefined;
+		const fromName = JSON.stringify(this.name);
+		// Pre-build the static portion: '{"category":"request","from":"...","fromName":"..."'
+		this.outgoingRequestPrefix =
+			from !== undefined
+				? `{"category":"request","from":${from},"fromName":${fromName}`
+				: `{"category":"request","fromName":${fromName}`;
+		this.outgoingResponsePrefix =
+			from !== undefined
+				? `{"category":"response","from":${from},"fromName":${fromName}`
+				: `{"category":"response","fromName":${fromName}`;
 	}
 
 	/** Default interval for heartbeat pings in milliseconds (30 seconds). */
@@ -573,7 +641,9 @@ export class RpcPeer<
 	 * ```
 	 */
 	async dispose(): Promise<void> {
-		console.time("[Peer] Dispose");
+		if (this.disposed) return;
+		this.disposed = true;
+
 		console.debug("[Peer] Dispose");
 		this.stopHeartbeat();
 		await this.close();
@@ -590,23 +660,30 @@ export class RpcPeer<
 		}
 		this.pendingPromises.clear();
 
-		console.time("[Peer] Dispose");
+		// Remove all tracked event listeners (match / onNotification)
+		for (const entry of this.trackedListeners) {
+			this.removeEventListener(entry.type, entry.listener);
+		}
+		this.trackedListeners.length = 0;
 	}
+
+	/** Pre-built pong JSON prefix to avoid repeated object creation and serialization. */
+	private static readonly PongPrefix =
+		'{"category":"pong","timestamp":' as const;
+	/** Pre-built ping JSON prefix to avoid repeated object creation and serialization. */
+	private static readonly PingPrefix =
+		'{"category":"ping","timestamp":' as const;
 
 	/**
 	 * Starts sending periodic heartbeat pings.
+	 * Uses pre-built JSON prefix to avoid creating objects on each tick.
 	 * @private
 	 */
 	private startHeartbeat(): void {
 		this.stopHeartbeat();
 		this.heartbeatTimer = globalThis.setInterval(() => {
 			if (this.retrySocket.readyState === WebSocket.OPEN) {
-				this.retrySocket.send(
-					JSON.stringify({
-						category: "ping",
-						timestamp: Date.now(),
-					}),
-				);
+				this.retrySocket.send(`${RpcPeer.PingPrefix}${Date.now()}}`);
 			}
 		}, this.heartbeatInterval);
 	}
@@ -764,8 +841,14 @@ export class RpcPeer<
 		try {
 			const json = JSON.parse(ev.data);
 
-			// Check if this is a stream message
-			if (this.streamManager.isStreamMessage(json)) {
+			// Check if this is a stream message using a fast property check
+			// instead of full Zod validation. handleStreamMessage will validate.
+			if (
+				json !== null &&
+				typeof json === "object" &&
+				"type" in json &&
+				"streamId" in json
+			) {
 				return this.streamManager.handleStreamMessage(json);
 			}
 
@@ -791,13 +874,8 @@ export class RpcPeer<
 			}
 
 			if (message.category === "ping") {
-				// Respond to ping with pong
-				this.retrySocket.send(
-					JSON.stringify({
-						category: "pong",
-						timestamp: message.timestamp,
-					}),
-				);
+				// Respond to ping with pong using pre-built prefix
+				this.retrySocket.send(`${RpcPeer.PongPrefix}${message.timestamp}}`);
 				return true;
 			}
 
@@ -884,14 +962,11 @@ export class RpcPeer<
 	 * ```
 	 */
 	send(data: TRequestApi): void {
-		const message: RpcRequest<TRequestApi> = {
-			category: "request",
-			requestId: crypto.randomUUID(),
-			from: this.clientId,
-			fromName: this.name,
-			data: data,
-		};
-		this.retrySocket.send(JSON.stringify(message));
+		const requestId = crypto.randomUUID();
+		const dataJson = JSON.stringify(data);
+		this.retrySocket.send(
+			`${this.outgoingRequestPrefix},"requestId":${JSON.stringify(requestId)},"data":${dataJson}}`,
+		);
 	}
 
 	/**
@@ -932,14 +1007,9 @@ export class RpcPeer<
 
 		const requestId = crypto.randomUUID();
 
-		const message: RpcRequest<TRequest> = {
-			category: "request",
-			requestId,
-			from: this.clientId,
-			fromName: this.name,
-			to,
-			data: data,
-		};
+		const dataJson = JSON.stringify(data);
+		const toField = to !== undefined ? `,"to":${JSON.stringify(to)}` : "";
+		const serialized = `${this.outgoingRequestPrefix},"requestId":${JSON.stringify(requestId)}${toField},"data":${dataJson}}`;
 
 		const { promise, resolve, reject } =
 			Promise.withResolvers<RpcResponse<TResponse>>();
@@ -954,7 +1024,7 @@ export class RpcPeer<
 		this.pendingPromises.set(requestId, { resolve, reject, timer });
 
 		try {
-			this.retrySocket.send(JSON.stringify(message));
+			this.retrySocket.send(serialized);
 		} catch (err) {
 			globalThis.clearTimeout(timer);
 			this.pendingPromises.delete(requestId);
@@ -987,16 +1057,18 @@ export class RpcPeer<
 		originalRequest: RpcRequest<TRequestApi>,
 		data: TResponseApi,
 	): void {
-		const message: RpcResponse<TResponseApi> = {
-			category: "response",
-			requestId: originalRequest.requestId,
-			from: this.clientId,
-			fromName: this.name,
-			to: originalRequest.from,
-			toName: originalRequest.fromName,
-			data,
-		};
-		this.retrySocket.send(JSON.stringify(message));
+		const toField =
+			originalRequest.from !== undefined
+				? `,"to":${JSON.stringify(originalRequest.from)}`
+				: "";
+		const toNameField =
+			originalRequest.fromName !== undefined
+				? `,"toName":${JSON.stringify(originalRequest.fromName)}`
+				: "";
+		const dataJson = JSON.stringify(data);
+		this.retrySocket.send(
+			`${this.outgoingResponsePrefix},"requestId":${JSON.stringify(originalRequest.requestId)}${toField}${toNameField},"data":${dataJson}}`,
+		);
 	}
 
 	/**
@@ -1029,8 +1101,8 @@ export class RpcPeer<
 			TResponseApi,
 			string
 		> = MatchHandler<ExplicitAny, TResponseApi, string>,
-	>(handler: THandler): void {
-		this.addEventListener("request", async (ev: Event) => {
+	>(handler: THandler): () => void {
+		const listener = async (ev: Event) => {
 			const customEv = ev as CustomEvent<RpcRequest<TRequestApi>>;
 			const req = customEv.detail;
 			try {
@@ -1041,7 +1113,18 @@ export class RpcPeer<
 			} catch (err) {
 				console.error("[Peer] Match handler error", err);
 			}
-		});
+		};
+
+		this.addEventListener("request", listener);
+		this.trackedListeners.push({ type: "request", listener });
+
+		return () => {
+			this.removeEventListener("request", listener);
+			const idx = this.trackedListeners.findIndex(
+				(e) => e.listener === listener,
+			);
+			if (idx !== -1) this.trackedListeners.splice(idx, 1);
+		};
 	}
 
 	/**
@@ -1062,8 +1145,8 @@ export class RpcPeer<
 	 */
 	onNotification(
 		handler: (data: TResponseApi, from?: string) => void | Promise<void>,
-	): void {
-		this.addEventListener("notification", async (ev: Event) => {
+	): () => void {
+		const listener = async (ev: Event) => {
 			const customEv = ev as CustomEvent<RpcRequest<TResponseApi>>;
 			const req = customEv.detail;
 			try {
@@ -1071,7 +1154,18 @@ export class RpcPeer<
 			} catch (err) {
 				console.error("[Peer] Notification handler error", err);
 			}
-		});
+		};
+
+		this.addEventListener("notification", listener);
+		this.trackedListeners.push({ type: "notification", listener });
+
+		return () => {
+			this.removeEventListener("notification", listener);
+			const idx = this.trackedListeners.findIndex(
+				(e) => e.listener === listener,
+			);
+			if (idx !== -1) this.trackedListeners.splice(idx, 1);
+		};
 	}
 
 	/**

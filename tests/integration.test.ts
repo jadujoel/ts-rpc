@@ -7,11 +7,11 @@ import {
 	type ResponseApiExample,
 	ResponseApiSchemaExample,
 } from "../examples/SchemaExample.ts";
-import { serve, type WebSocketData } from "../examples/serve";
+import { serve } from "../examples/serve";
 import { RpcPeer } from "../shared/RpcPeer.ts";
 
 describe("Integration Tests", () => {
-	let server: Server<WebSocketData>;
+	let server: Server;
 	const TEST_PORT = 8765;
 	const TEST_URL = `ws://127.0.0.1:${TEST_PORT}`;
 

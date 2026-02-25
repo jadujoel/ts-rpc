@@ -9,7 +9,6 @@ import {
 	NoAuthValidator,
 	RateLimiter,
 } from "../shared/Authorization.ts";
-import home from "./src/index.html";
 
 /**
  * Configuration options for the RPC WebSocket server.
@@ -130,7 +129,7 @@ export function serve({
 	enableRateLimit = true,
 	maxMessageSize = 1024 * 1024, // 1MB default
 	enableSessionPersistence = true,
-}: ServeOptions = {}): Server<WebSocketData> {
+}: ServeOptions = {}): Server {
 	Logger = logger;
 
 	debug("Server Options", {
@@ -149,9 +148,6 @@ export function serve({
 		hostname,
 		port,
 		development,
-		routes: {
-			"/": home,
-		},
 		async fetch(request, server): Promise<Response> {
 			if (BANNED_STRINGS.some((banned) => request.url.includes(banned))) {
 				return new Response("404");
@@ -470,7 +466,7 @@ function getWebSocketData(
  */
 async function getResponse(
 	request: Request,
-	server: Server<WebSocketData>,
+	server: Server,
 ): Promise<Response> {
 	switch (request.method) {
 		case "GET": {
