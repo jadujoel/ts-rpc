@@ -1,6 +1,6 @@
 {
 	"name": "p2p-demo",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"type": "module",
 	"scripts": {
 		"dev": "bun server/index.ts --hot",
