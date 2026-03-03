@@ -2,19 +2,32 @@
 	"name": "@jadujoel/ts-rpc",
 	"module": "lib.ts",
 	"type": "module",
-	"main": "lib.ts",
+	"main": "dist/lib.js",
+	"types": "dist/lib.d.ts",
 	"private": false,
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"publishConfig": {
 		"access": "public"
+	},
+	"exports": {
+		".": {
+			"bun": "./lib.ts",
+			"import": {
+				"types": "./dist/lib.d.ts",
+				"default": "./dist/lib.js"
+			},
+			"default": "./dist/lib.js"
+		}
 	},
 	"scripts": {
 		"validate": "bun run build && bun lint && bun test --coverage",
 		"lint": "bunx biome lint",
-		"build": "bunx tsc"
+		"build": "rm -rf dist && bunx tsc -p tsconfig.build.json",
+		"typecheck": "bunx tsc --noEmit",
+		"prepublishOnly": "bun run build"
 	},
 	"devDependencies": {
-		"@types/bun": "latest"
+		"@types/bun": "1.3.10"
 	},
 	"peerDependencies": {
 		"typescript": "^5"

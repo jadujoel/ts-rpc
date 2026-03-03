@@ -214,13 +214,15 @@ async function sendLogStream(
  * Server-side: Handle stream requests and send streams
  */
 async function runServer() {
-	const server = Bun.serve<WebSocketData>({
+	const server = Bun.serve<WebSocketData, never>({
 		port: 3000,
 		fetch(req, server) {
 			const url = new URL(req.url);
 
 			if (url.pathname === "/ws") {
-				const success = server.upgrade(req);
+				const success = server.upgrade(req, {
+					data: { url: req.url } as WebSocketData,
+				});
 				if (success) {
 					return;
 				}

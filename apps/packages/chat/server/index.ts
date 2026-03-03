@@ -53,7 +53,7 @@ function pushMessage(msg: StoredMessage): void {
  * Simple chat relay server
  * Handles message routing and user management
  */
-export function createChatServer(port = 8080): Bun.Server {
+export function createChatServer(port = 8080): Bun.Server<unknown> {
 	const server = Bun.serve({
 		port,
 		routes: {

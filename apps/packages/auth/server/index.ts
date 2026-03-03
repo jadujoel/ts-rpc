@@ -33,7 +33,7 @@ const authRules = StrictAuthorizationRules.FromOptions({
 /**
  * Auth demo server with authentication and authorization
  */
-export function createAuthServer(port = 8081): Bun.Server {
+export function createAuthServer(port = 8081): Bun.Server<unknown> {
 	const server = Bun.serve({
 		port,
 		routes: {

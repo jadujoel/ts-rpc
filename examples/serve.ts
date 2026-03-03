@@ -129,7 +129,7 @@ export function serve({
 	enableRateLimit = true,
 	maxMessageSize = 1024 * 1024, // 1MB default
 	enableSessionPersistence = true,
-}: ServeOptions = {}): Server {
+}: ServeOptions = {}): Server<WebSocketData> {
 	Logger = logger;
 
 	debug("Server Options", {
@@ -466,7 +466,7 @@ function getWebSocketData(
  */
 async function getResponse(
 	request: Request,
-	server: Server,
+	server: Server<WebSocketData>,
 ): Promise<Response> {
 	switch (request.method) {
 		case "GET": {

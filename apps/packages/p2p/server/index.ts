@@ -14,7 +14,7 @@ const clients = new Map<string, Bun.ServerWebSocket<WebSocketData>>();
  * P2P relay server
  * Handles both direct peer-to-peer and broadcast messaging
  */
-export function createP2PServer(port = 8082): Bun.Server {
+export function createP2PServer(port = 8082): Bun.Server<unknown> {
 	const server = Bun.serve({
 		port,
 		routes: {
